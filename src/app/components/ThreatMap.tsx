@@ -21,18 +21,18 @@ export function ThreatMap() {
 
   const getSensorColor = (status: string) => {
     switch (status) {
-      case 'Active':
+      case 'active':
         return '#16A34A';
-      case 'Error':
+      case 'error':
         return '#DC2626';
-      case 'Offline':
+      case 'inactive':
         return '#6B7280';
       default:
         return '#6B7280';
     }
   };
 
-  const selectedSensorData = sensorList.find((s) => s.id === selectedSensor);
+  const selectedSensorData = sensorList.find((s) => s.sensor_id === selectedSensor);
 
   return (
     <div
@@ -101,14 +101,17 @@ export function ThreatMap() {
         <div className="absolute inset-0" style={{ transform: `scale(${zoom})` }}>
           {sensorList.map((sensor) => {
             const color = getSensorColor(sensor.status);
+            // Calculate position from lat/lng (using simple percentage mapping)
+            const posX = ((sensor.lng + 180) / 360) * 100;
+            const posY = ((90 - sensor.lat) / 180) * 100;
             
             return (
               <div
-                key={sensor.id}
+                key={sensor.sensor_id}
                 className="absolute"
                 style={{
-                  left: `${sensor.position.x}%`,
-                  top: `${sensor.position.y}%`,
+                  left: `${posX}%`,
+                  top: `${posY}%`,
                   transform: 'translate(-50%, -50%)',
                 }}
               >
@@ -116,8 +119,8 @@ export function ThreatMap() {
                 <div
                   className="absolute rounded-full pointer-events-none"
                   style={{
-                    width: `${sensor.coverageRadius * 2}vw`,
-                    height: `${sensor.coverageRadius * 2}vw`,
+                    width: `${(sensor.coverage_radius_m / 1000) * 2}vw`,
+                    height: `${(sensor.coverage_radius_m / 1000) * 2}vw`,
                     left: '50%',
                     top: '50%',
                     transform: 'translate(-50%, -50%)',
@@ -128,7 +131,7 @@ export function ThreatMap() {
 
                 {/* Sensor Marker */}
                 <button
-                  onClick={() => setSelectedSensor(sensor.id === selectedSensor ? null : sensor.id)}
+                  onClick={() => setSelectedSensor(sensor.sensor_id === selectedSensor ? null : sensor.sensor_id)}
                   className="relative z-10 transition-all duration-200 cursor-pointer"
                   style={{
                     width: '48px',
@@ -150,7 +153,7 @@ export function ThreatMap() {
                     }}
                   >
                     {/* Pulse ring for active sensors */}
-                    {sensor.status === 'Active' && (
+                    {sensor.status === 'active' && (
                       <div
                         className="absolute inset-0 rounded-full animate-ping"
                         style={{
@@ -162,7 +165,7 @@ export function ThreatMap() {
 
                     {/* Icon */}
                     <div style={{ color }}>
-                      {sensor.type === 'Radar' ? (
+                      {sensor.sensor_type === 'Radar' ? (
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                           <path
                             d="M12 2C12 2 12 12 12 12M12 12C12 12 22 12 22 12M12 12C12 12 12 22 12 22M12 12C12 12 2 12 2 12"
@@ -194,7 +197,7 @@ export function ThreatMap() {
                       border: `1px solid ${color}40`,
                     }}
                   >
-                    {sensor.id}
+                    {sensor.sensor_id}
                   </div>
                 </button>
               </div>
@@ -234,7 +237,7 @@ export function ThreatMap() {
                       color: 'var(--text-primary)',
                     }}
                   >
-                    {selectedSensorData.id}
+                    {selectedSensorData.sensor_id}
                   </span>
                 </div>
                 <button

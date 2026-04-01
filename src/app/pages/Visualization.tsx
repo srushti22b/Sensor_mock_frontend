@@ -17,18 +17,21 @@ import {
   Legend,
 } from 'recharts';
 import { Download, ChevronDown, RotateCcw } from 'lucide-react';
+import { parseISO, formatISO } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 import { NotificationBell } from '../components/NotificationBell';
 import { useWebSocket } from '../context/WebSocketContext';
 import { apiGet, APIError } from '../services/apiClient';
-import { ThreatTimelineItem, ThreatPerSensor, SeverityBreakdown, ThreatLog } from '../types/api';
+import { ThreatTimelineOut, ThreatsPerSensorOut, SeverityBreakdownOut, ThreatTypeBreakdownOut, ThreatLog, PagedThreats } from '../types/api';
 
 export function Visualization() {
   const { liveThreats } = useWebSocket();
   
   // State for fetched analytics data
-  const [threatsOverTimeData, setThreatsOverTimeData] = useState<ThreatTimelineItem[]>([]);
+  const [threatsOverTimeData, setThreatsOverTimeData] = useState<any[]>([]);
   const [threatsByLocationData, setThreatsByLocationData] = useState<any[]>([]);
   const [threatTypeDistributionData, setThreatTypeDistributionData] = useState<any[]>([]);
+  const [severityBreakdownData, setSeverityBreakdownData] = useState<any[]>([]);
   const [sensorActivityData, setSensorActivityData] = useState<any[]>([]);
   const [allThreats, setAllThreats] = useState<ThreatLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,49 +45,143 @@ export function Visualization() {
   const [filterSeverity, setFilterSeverity] = useState('All');
   const [fromDateTime, setFromDateTime] = useState<Date | null>(null);
   const [toDateTime, setToDateTime] = useState<Date | null>(null);
+  const [timezone, setTimezone] = useState<string>(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      return 'UTC';
+    }
+  });
+  const [availableTimezones, setAvailableTimezones] = useState<string[]>([]);
+  const [availableThreatTypes, setAvailableThreatTypes] = useState<string[]>([]);
+  const [availableLocations, setAvailableLocations] = useState<string[]>([]);
 
-  // Fetch analytics data
+  // Initialize available timezones
+  useEffect(() => {
+    try {
+      const tzs = Intl.supportedValuesOf('timeZone');
+      setAvailableTimezones(tzs);
+    } catch {
+      // Fallback to common timezones if not supported
+      setAvailableTimezones(['UTC', 'America/New_York', 'Europe/London', 'Asia/Tokyo']);
+    }
+  }, []);
+
+  // Build query parameters based on current filters and timezone
+  const buildQueryParams = () => {
+    const params = new URLSearchParams();
+    
+    if (filterLocation !== 'All') {
+      params.append('location', filterLocation);
+    }
+    if (filterSensorType !== 'All') {
+      params.append('sensor_type', filterSensorType);
+    }
+    if (filterThreatType !== 'All') {
+      params.append('threat_type', filterThreatType);
+    }
+    if (filterSeverity !== 'All') {
+      params.append('severity', filterSeverity);
+    }
+
+    // Handle time range parameters
+    const now = new Date();
+    let startTime: string | null = null;
+    let endTime: string | null = null;
+
+    if (filterTimeRange === 'Last 30 Min') {
+      startTime = formatISO(new Date(now.getTime() - 30 * 60 * 1000));
+    } else if (filterTimeRange === 'Last 1 Hour') {
+      startTime = formatISO(new Date(now.getTime() - 60 * 60 * 1000));
+    } else if (filterTimeRange === 'Last 24 Hours') {
+      startTime = formatISO(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+    } else if (filterTimeRange === 'Last 7 Days') {
+      startTime = formatISO(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+    } else if (filterTimeRange === 'Last 30 Days') {
+      startTime = formatISO(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
+    } else if (filterTimeRange === 'Custom' && fromDateTime && toDateTime) {
+      // Convert to timezone-adjusted ISO format
+      const startZoned = toZonedTime(fromDateTime, timezone);
+      const endZoned = toZonedTime(toDateTime, timezone);
+      startTime = formatISO(startZoned);
+      endTime = formatISO(endZoned);
+    }
+
+    if (startTime) {
+      params.append('start_time', startTime);
+    }
+    if (endTime) {
+      params.append('end_time', endTime);
+    }
+
+    return params.toString();
+  };
+
+  // Fetch analytics data when filters change
   useEffect(() => {
     const fetchAnalytics = async () => {
       try {
         setLoading(true);
         setError(null);
-        const [timeline, perSensor, severity, threats] = await Promise.all([
-          apiGet<ThreatTimelineItem[]>('/api/v1/analytics/threat-timeline'),
-          apiGet<ThreatPerSensor[]>('/api/v1/analytics/threats-per-sensor'),
-          apiGet<SeverityBreakdown[]>('/api/v1/analytics/severity-breakdown'),
-          apiGet<ThreatLog[]>('/api/v1/threats'),
+        
+        const queryString = buildQueryParams();
+        const suffix = queryString ? `?${queryString}` : '';
+
+        const [timeline, perSensor, severity, threatTypeBreakdown, pagedThreats] = await Promise.all([
+          apiGet<ThreatTimelineOut>(`/api/v1/analytics/threat-timeline${suffix}`),
+          apiGet<ThreatsPerSensorOut>(`/api/v1/analytics/threats-per-sensor${suffix}`),
+          apiGet<SeverityBreakdownOut>(`/api/v1/analytics/severity-breakdown${suffix}`),
+          apiGet<ThreatTypeBreakdownOut>(`/api/v1/analytics/threat-type-breakdown${suffix}`),
+          apiGet<PagedThreats>('/api/v1/threats'),
         ]);
         
-        setThreatsOverTimeData(timeline);
-        setSensorActivityData(perSensor.map(item => ({ sensor: item.sensorId, count: item.count })));
-        
-        // Transform severity breakdown for pie chart
-        const colorMap: { [key: string]: string } = {
-          High: '#FF3B3B',
-          Medium: '#FF9F0A',
-          Low: '#16A34A',
-        };
-        setThreatTypeDistributionData(
-          severity.map(item => ({
-            name: item.severity,
-            value: item.count,
-            color: colorMap[item.severity] || '#999999',
+        // Map threat timeline data: bucket => time field
+        const timelineData = timeline.data.map(item => ({
+          time: item.bucket,
+          count: item.count,
+        })).sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+        setThreatsOverTimeData(timelineData);
+
+        // Map threats per sensor with location field
+        const locationData = perSensor.data
+          .map(item => ({ 
+            location: item.location || 'Unknown', 
+            count: item.count 
           }))
-        );
+          .sort((a, b) => b.count - a.count);
+        setThreatsByLocationData(locationData);
+
+        // Extract available locations from returned data
+        const locations = Array.from(new Set(perSensor.data.map(item => item.location).filter(Boolean)));
+        setAvailableLocations(locations);
+
+        // Map threat type breakdown to vertical bar chart format
+        const threatTypeData = threatTypeBreakdown.data.map(item => ({
+          threat_type: item.threat_type,
+          count: item.count,
+        }));
+        setThreatTypeDistributionData(threatTypeData);
+
+        // Extract available threat types from returned data
+        const threatTypes = Array.from(new Set(threatTypeBreakdown.data.map(item => item.threat_type)));
+        setAvailableThreatTypes(threatTypes);
+
+        // Map severity breakdown data with colors
+        const severityColors: { [key: string]: string } = {
+          low: '#16A34A',
+          med: '#D97706',
+          high: '#DC2626',
+          critical: '#8B0000',
+        };
+        const severityData = severity.data.map(item => ({
+          name: item.severity.charAt(0).toUpperCase() + item.severity.slice(1),
+          value: item.count,
+          color: severityColors[item.severity] || '#999999',
+        }));
+        setSeverityBreakdownData(severityData);
         
-        setAllThreats(threats);
-        
-        // Derive threats by location from threats data
-        const locationMap: { [key: string]: number } = {};
-        threats.forEach((threat) => {
-          locationMap[threat.location] = (locationMap[threat.location] || 0) + 1;
-        });
-        setThreatsByLocationData(
-          Object.entries(locationMap)
-            .map(([location, count]) => ({ location, count }))
-            .sort((a, b) => b.count - a.count)
-        );
+        // Extract items from paginated response
+        setAllThreats(pagedThreats.items);
       } catch (err) {
         const message = err instanceof APIError ? err.message : 'Failed to fetch analytics';
         setError(message);
@@ -94,32 +191,22 @@ export function Visualization() {
       }
     };
     fetchAnalytics();
-  }, []);
+  }, [filterTimeRange, filterLocation, filterThreatType, filterSensorType, filterSeverity, fromDateTime, toDateTime, timezone]);
 
-  // Helper function to parse threat time
-  const parseTime = (timeStr: string): Date => {
-    return new Date(timeStr.replace(',', ''));
-  };
-
-  // Merge API threats with live threats, removing duplicates by id
+  // Merge API threats with live threats, removing duplicates by alert_id
   const mergedThreats = Array.from(
-    new Map([...allThreats, ...liveThreats].map(t => [t.id, t])).values()
+    new Map([...allThreats, ...liveThreats].map(t => [t.alert_id, t])).values()
   );
 
   // Filter threats based on all criteria
   const filteredThreats = mergedThreats.filter((threat) => {
-    // Location filter
-    if (filterLocation !== 'All' && threat.location !== filterLocation) {
-      return false;
-    }
-
     // Threat Type filter
-    if (filterThreatType !== 'All' && threat.threat !== filterThreatType) {
+    if (filterThreatType !== 'All' && threat.threat_type !== filterThreatType) {
       return false;
     }
 
     // Sensor Type filter
-    if (filterSensorType !== 'All' && threat.sensorType !== filterSensorType) {
+    if (filterSensorType !== 'All' && threat.sensor_type !== filterSensorType) {
       return false;
     }
 
@@ -130,7 +217,7 @@ export function Visualization() {
 
     // Time Range filter
     if (filterTimeRange !== 'All') {
-      const threatTime = parseTime(threat.time);
+      const threatTime = new Date(threat.timestamp);
       const now = new Date();
 
       if (filterTimeRange === 'Last 30 Min') {
@@ -160,6 +247,11 @@ export function Visualization() {
     setFilterSeverity('All');
     setFromDateTime(null);
     setToDateTime(null);
+    try {
+      setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    } catch {
+      setTimezone('UTC');
+    }
   };
 
   return (
@@ -375,12 +467,11 @@ export function Visualization() {
                     }}
                   >
                     <option value="All">All</option>
-                    <option value="North Gate">North Gate</option>
-                    <option value="East Fence">East Fence</option>
-                    <option value="Main Entry">Main Entry</option>
-                    <option value="Server Room">Server Room</option>
-                    <option value="South Perimeter">South Perimeter</option>
-                    <option value="West Wall">West Wall</option>
+                    {availableLocations.map((location) => (
+                      <option key={location} value={location}>
+                        {location}
+                      </option>
+                    ))}
                   </select>
                   <ChevronDown
                     size={16}
@@ -419,10 +510,11 @@ export function Visualization() {
                     }}
                   >
                     <option value="All">All</option>
-                    <option value="Drone">Drone</option>
-                    <option value="Trespassing">Trespassing</option>
-                    <option value="Weapon">Weapon</option>
-                    <option value="Temperature">Temperature</option>
+                    {availableThreatTypes.map((threatType) => (
+                      <option key={threatType} value={threatType}>
+                        {threatType}
+                      </option>
+                    ))}
                   </select>
                   <ChevronDown
                     size={16}
@@ -501,9 +593,51 @@ export function Visualization() {
                     }}
                   >
                     <option value="All">All</option>
-                    <option value="High">High</option>
-                    <option value="Medium">Medium</option>
-                    <option value="Low">Low</option>
+                    <option value="high">High</option>
+                    <option value="med">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <ChevronDown
+                    size={16}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{ color: 'var(--accent-cyan)' }}
+                  />
+                </div>
+              </div>
+
+              {/* Timezone */}
+              <div className="flex-1 min-w-[150px]">
+                <label
+                  className="block mb-2"
+                  style={{
+                    fontSize: '0.71875rem',
+                    color: 'var(--text-secondary)',
+                    fontFamily: 'var(--font-mono)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    fontWeight: 600,
+                  }}
+                >
+                  Timezone
+                </label>
+                <div className="relative">
+                  <select
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                    className="w-full appearance-none px-3 py-2 pr-10 rounded cursor-pointer transition-all duration-200"
+                    style={{
+                      background: '#FFFFFF',
+                      border: '1px solid #E2E8F0',
+                      borderRadius: '6px',
+                      color: 'var(--text-primary)',
+                      fontSize: '1.00625rem',
+                    }}
+                  >
+                    {availableTimezones.map((tz) => (
+                      <option key={tz} value={tz}>
+                        {tz}
+                      </option>
+                    ))}
                   </select>
                   <ChevronDown
                     size={16}
@@ -745,7 +879,7 @@ export function Visualization() {
 
           {/* Chart 3: Threat Type Distribution */}
           <ChartCard title="Threat Type Distribution">
-            {filteredThreats.length === 0 ? (
+            {threatTypeDistributionData.length === 0 ? (
               <div className="w-full h-[250px] flex items-center justify-center">
                 <div
                   style={{
@@ -757,69 +891,44 @@ export function Visualization() {
                 </div>
               </div>
             ) : (
-              <>
-                <ResponsiveContainer width="100%" height={250}>
-                  <PieChart>
-                    <Pie
-                      data={threatTypeDistributionData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={90}
-                      paddingAngle={2}
-                      dataKey="value"
-                    >
-                      {threatTypeDistributionData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={{
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '8px',
-                        color: 'var(--text-primary)',
-                      }}
-                    />
-                    <Legend
-                      wrapperStyle={{
-                        fontSize: '0.865rem',
-                        fontFamily: 'var(--font-mono)',
-                        color: 'var(--text-primary)',
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div
-                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none"
-                  style={{ marginTop: '-10px' }}
-                >
-                  <div
-                    className="font-heading"
-                    style={{
-                      fontSize: '1.725rem',
-                      fontWeight: 700,
-                      color: 'var(--text-primary)',
-                    }}
-                  >
-                    {filteredThreats.length}
-                  </div>
-                  <div
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={threatTypeDistributionData}>
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="rgba(226, 232, 240, 0.8)"
+                  />
+                  <XAxis
+                    dataKey="threat_type"
+                    stroke="var(--text-secondary)"
                     style={{
                       fontSize: '0.865rem',
-                      color: 'var(--text-secondary)',
+                      fontFamily: 'var(--font-mono)',
                     }}
-                  >
-                    TOTAL
-                  </div>
-                </div>
-              </>
+                  />
+                  <YAxis
+                    stroke="var(--text-secondary)"
+                    style={{
+                      fontSize: '0.865rem',
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                  <Bar dataKey="count" fill="#0284C7" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             )}
           </ChartCard>
 
-          {/* Chart 4: Sensor Activity Heatmap */}
-          <ChartCard title="Sensor Activity Heatmap">
-            {filteredThreats.length === 0 ? (
+          {/* Chart 4: Severity Breakdown */}
+          <ChartCard title="Severity Breakdown">
+            {severityBreakdownData.length === 0 ? (
               <div className="w-full h-[250px] flex items-center justify-center">
                 <div
                   style={{
@@ -831,78 +940,38 @@ export function Visualization() {
                 </div>
               </div>
             ) : (
-              <div className="w-full h-[250px] overflow-auto">
-                <div className="min-w-[600px]">
-                  {(() => {
-                    // Derive heatmap data from filtered threats
-                    const sensorSet = new Set(mergedThreats.map(t => t.sensorId));
-                    const heatmapData = Array.from(sensorSet).map((sensorId) => {
-                      const hours = Array(24).fill(0);
-                      filteredThreats
-                        .filter((threat) => threat.sensorId === sensorId)
-                        .forEach((threat) => {
-                          const hour = parseTime(threat.time).getHours();
-                          hours[hour]++;
-                        });
-                      return { sensor: sensorId, hours };
-                    });
-                    return heatmapData;
-                  })().map((sensorData: any) => (
-                    <div
-                      key={sensorData.sensor}
-                      className="flex items-center gap-2 mb-1"
-                    >
-                      <div
-                        className="w-16 text-right"
-                        style={{
-                          fontSize: '0.865rem',
-                          fontFamily: 'var(--font-mono)',
-                          color: 'var(--accent-cyan)',
-                        }}
-                      >
-                        {sensorData.sensor}
-                      </div>
-                      <div className="flex gap-1 flex-1">
-                        {sensorData.hours.map((activity: number, hourIdx: number) => {
-                          const intensity = activity / 12;
-                          return (
-                            <div
-                              key={hourIdx}
-                              className="w-5 h-8 rounded transition-all duration-200"
-                              style={{
-                                background: `rgba(2, 132, 199, ${
-                                  intensity * 0.8
-                                })`,
-                                border:
-                                  '1px solid rgba(2, 132, 199, 0.2)',
-                              }}
-                              title={`${hourIdx}:00 - Activity: ${activity}`}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-2 mt-3">
-                    <div className="w-16" />
-                    <div className="flex gap-1 flex-1">
-                      {Array.from({ length: 24 }).map((_, idx) => (
-                        <div
-                          key={idx}
-                          className="w-5 text-center"
-                          style={{
-                            fontSize: '0.71875rem',
-                            color: 'var(--text-secondary)',
-                            fontFamily: 'var(--font-mono)',
-                          }}
-                        >
-                          {idx % 3 === 0 ? idx : ''}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <ResponsiveContainer width="100%" height={250}>
+                <PieChart>
+                  <Pie
+                    data={severityBreakdownData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={90}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {severityBreakdownData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{
+                      fontSize: '0.865rem',
+                      fontFamily: 'var(--font-mono)',
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
             )}
           </ChartCard>
         </div>

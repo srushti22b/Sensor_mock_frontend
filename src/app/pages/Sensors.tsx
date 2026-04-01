@@ -21,28 +21,33 @@ export function Sensors() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingSensor, setEditingSensor] = useState<SensorOut | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSuccess, setEditSuccess] = useState(false);
   const [formData, setFormData] = useState({
-    id: "",
-    type: "Radar" as "Radar" | "Lidar",
+    sensor_id: "",
+    sensor_type: "radar" as "radar" | "lidar",
     location: "",
-    status: "Active" as "Active" | "Offline" | "Error",
+    lat: 0 as number,
+    lng: 0 as number,
+    coverage_radius_m: 50.0 as number,
   });
 
   const stats = {
     total: sensorList.length,
-    active: sensorList.filter((s) => s.status === "Active").length,
-    offline: sensorList.filter((s) => s.status === "Offline").length,
-    error: sensorList.filter((s) => s.status === "Error").length,
+    active: sensorList.filter((s) => s.status === "active").length,
+    offline: sensorList.filter((s) => s.status === "inactive").length,
+    error: sensorList.filter((s) => s.status === "error").length,
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "Active":
+      case "active":
         return "#16A34A";
-      case "Error":
+      case "error":
         return "#DC2626";
-      case "Offline":
+      case "inactive":
         return "#6B7280";
       default:
         return "#6B7280";
@@ -51,45 +56,70 @@ export function Sensors() {
 
   const openAddModal = () => {
     setFormData({
-      id: "",
-      type: "Radar",
+      sensor_id: "",
+      sensor_type: "radar",
       location: "",
-      status: "Active",
+      lat: 0,
+      lng: 0,
+      coverage_radius_m: 50.0,
     });
+    setEditError(null);
+    setEditSuccess(false);
     setIsModalOpen(true);
   };
 
   const openEditModal = (sensor: SensorOut) => {
     setEditingSensor(sensor);
     setFormData({
-      id: sensor.id,
-      type: sensor.type,
+      sensor_id: sensor.sensor_id,
+      sensor_type: sensor.sensor_type,
       location: sensor.location,
-      status: sensor.status,
+      lat: sensor.lat,
+      lng: sensor.lng,
+      coverage_radius_m: sensor.coverage_radius_m,
     });
+    setEditError(null);
+    setEditSuccess(false);
     setIsEditModalOpen(true);
   };
 
   const handleSaveAdd = async () => {
     try {
+      // Validate required fields
+      if (!formData.sensor_id.trim()) {
+        setEditError("Sensor ID is required");
+        return;
+      }
+      if (!formData.location.trim()) {
+        setEditError("Location is required");
+        return;
+      }
+
       setIsSubmitting(true);
-      const newSensor: Omit<SensorOut, 'id'> = {
-        type: formData.type,
-        status: formData.status,
+      setEditError(null);
+      setEditSuccess(false);
+
+      // SensorCreate schema requires: sensor_id, sensor_type, lat, lng, location, coverage_radius_m
+      const newSensor = {
+        sensor_id: formData.sensor_id,
+        sensor_type: formData.sensor_type,
+        lat: formData.lat,
+        lng: formData.lng,
         location: formData.location,
-        lastUpdated: new Date().toLocaleString("en-GB", {
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        position: { x: 50, y: 50 },
-        coverageRadius: formData.type === "Radar" ? 15 : 12,
+        coverage_radius_m: formData.coverage_radius_m,
       };
       await addSensor(newSensor);
-      setIsModalOpen(false);
+      
+      setEditSuccess(true);
+      
+      // Close modal after 1 second to show success feedback
+      setTimeout(() => {
+        setIsModalOpen(false);
+        setEditSuccess(false);
+      }, 1000);
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to add sensor';
+      setEditError(errorMessage);
       console.error('Failed to add sensor:', err);
     } finally {
       setIsSubmitting(false);
@@ -98,15 +128,36 @@ export function Sensors() {
 
   const handleSaveEdit = async () => {
     if (editingSensor) {
+      // Validate required fields
+      if (!formData.location.trim()) {
+        setEditError("Location is required");
+        return;
+      }
+
       try {
         setIsSubmitting(true);
-        await updateSensor(editingSensor.id, {
+        setEditError(null);
+        setEditSuccess(false);
+
+        // SensorUpdate schema requires: location (required), lat/lng/coverage_radius_m (optional)
+        await updateSensor(editingSensor.sensor_id, {
           location: formData.location,
-          status: formData.status,
+          lat: formData.lat,
+          lng: formData.lng,
+          coverage_radius_m: formData.coverage_radius_m,
         });
-        setIsEditModalOpen(false);
-        setEditingSensor(null);
+
+        setEditSuccess(true);
+        
+        // Close modal after 1 second to show success feedback
+        setTimeout(() => {
+          setIsEditModalOpen(false);
+          setEditingSensor(null);
+          setEditSuccess(false);
+        }, 1000);
       } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to update sensor';
+        setEditError(errorMessage);
         console.error('Failed to update sensor:', err);
       } finally {
         setIsSubmitting(false);
@@ -291,14 +342,15 @@ export function Sensors() {
       {/* Sensor Table */}
       <div>
         <div
-          className="rounded-lg overflow-hidden"
           style={{
             background: "var(--bg-card)",
             border: "1px solid var(--border-color)",
             boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+            borderRadius: '8px',
+            overflow: 'visible',
           }}
         >
-          <div className="overflow-x-auto">
+          <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
             <table className="w-full">
               <thead>
                 <tr
@@ -333,7 +385,7 @@ export function Sensors() {
               <tbody>
                 {sensorList.map((sensor, index) => (
                   <tr
-                    key={sensor.id}
+                    key={sensor.sensor_id}
                     className="border-b transition-all duration-200 group relative"
                     style={{
                       background:
@@ -361,7 +413,7 @@ export function Sensors() {
                         fontWeight: 600,
                       }}
                     >
-                      {sensor.id}
+                      {sensor.sensor_id}
                     </td>
                     <td
                       className="px-4 py-3"
@@ -370,7 +422,7 @@ export function Sensors() {
                         color: "var(--text-primary)",
                       }}
                     >
-                      {sensor.type}
+                      {sensor.sensor_type}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -408,11 +460,18 @@ export function Sensors() {
                         fontFamily: "var(--font-mono)",
                       }}
                     >
-                      {sensor.lastUpdated}
+                      {new Date(sensor.created_at).toLocaleString()}
                     </td>
-                    <td className="px-4 py-3 relative">
+                    <td className="px-4 py-3 relative" style={{ position: 'relative' }}>
                       <button
-                        onClick={() => setOpenMenuId(openMenuId === sensor.id ? null : sensor.id)}
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          setMenuPosition({
+                            top: rect.bottom + 4,
+                            left: rect.right - 140,
+                          })
+                          setOpenMenuId(openMenuId === sensor.sensor_id ? null : sensor.sensor_id)
+                        }}
                         className="p-2 rounded-full transition-all duration-200"
                         style={{ color: '#94A3B8', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.25rem' }}
                         onMouseEnter={(e) => {
@@ -426,52 +485,6 @@ export function Sensors() {
                       >
                         ⋮
                       </button>
-
-                      {openMenuId === sensor.id && (
-                        <>
-                          {/* Backdrop to close on outside click */}
-                          <div
-                            className="fixed inset-0 z-10"
-                            onClick={() => setOpenMenuId(null)}
-                          />
-                          {/* Dropdown */}
-                          <div
-                            className="absolute right-0 z-20 rounded-lg"
-                            style={{
-                              background: '#FFFFFF',
-                              border: '1px solid #E2E8F0',
-                              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                              width: '120px',
-                              top: '100%',
-                            }}
-                          >
-                            <button
-                              onClick={() => {
-                                setOpenMenuId(null)
-                                openEditModal(sensor)
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 transition-colors duration-200"
-                              style={{
-                                fontSize: '0.875rem',
-                                color: '#1E293B',
-                                background: 'transparent',
-                                border: 'none',
-                                cursor: 'pointer',
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.background = '#F0F9FF'
-                                e.currentTarget.style.color = '#0284C7'
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.background = 'transparent'
-                                e.currentTarget.style.color = '#1E293B'
-                              }}
-                            >
-                              ✏️ Edit
-                            </button>
-                          </div>
-                        </>
-                      )}
                     </td>
                   </tr>
                 ))}
@@ -480,6 +493,70 @@ export function Sensors() {
           </div>
         </div>
       </div>
+
+      {/* Dropdown Menu Portal - Renders outside table constraints */}
+      {openMenuId && (
+        <>
+          {/* Backdrop */}
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 999,
+            }}
+            onClick={() => setOpenMenuId(null)}
+          />
+          {/* Dropdown */}
+          <div
+            style={{
+              position: 'fixed',
+              background: '#FFFFFF',
+              border: '1px solid #E2E8F0',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              width: '140px',
+              zIndex: 1000,
+              borderRadius: '6px',
+              overflow: 'hidden',
+              top: `${menuPosition.top}px`,
+              left: `${menuPosition.left}px`,
+            }}
+          >
+            <button
+              onClick={() => {
+                setOpenMenuId(null)
+                const sensor = sensorList.find(s => s.sensor_id === openMenuId)
+                if (sensor) {
+                  openEditModal(sensor)
+                }
+              }}
+              style={{
+                fontSize: '0.875rem',
+                color: '#1E293B',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                width: '100%',
+                padding: '8px 16px',
+                textAlign: 'left',
+                whiteSpace: 'nowrap',
+                display: 'block',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#F0F9FF'
+                e.currentTarget.style.color = '#0284C7'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent'
+                e.currentTarget.style.color = '#1E293B'
+              }}
+            >
+              Edit
+            </button>
+          </div>
         </>
       )}
 
@@ -516,6 +593,35 @@ export function Sensors() {
               Add a new sensor to the system.
             </DialogDescription>
           </DialogHeader>
+
+          {/* Error Message */}
+          {editError && (
+            <div
+              className="p-3 rounded-lg border text-sm"
+              style={{
+                background: '#FEE2E2',
+                border: '1px solid #FCA5A5',
+                color: '#991B1B',
+              }}
+            >
+              ⚠️ {editError}
+            </div>
+          )}
+
+          {/* Success Message */}
+          {editSuccess && (
+            <div
+              className="p-3 rounded-lg border text-sm"
+              style={{
+                background: '#DCFCE7',
+                border: '1px solid #86EFAC',
+                color: '#166534',
+              }}
+            >
+              ✓ Sensor added successfully!
+            </div>
+          )}
+
           <div className="space-y-4 mt-4">
             <div>
               <Label
@@ -526,14 +632,14 @@ export function Sensors() {
               </Label>
               <Input
                 id="sensorId"
-                value={formData.id}
+                value={formData.sensor_id}
                 onChange={(e) =>
                   setFormData({
                     ...formData,
-                    id: e.target.value,
+                    sensor_id: e.target.value,
                   })
                 }
-                placeholder="e.g. R-004"
+                placeholder="e.g. RADAR-4"
                 className="mt-1"
                 style={{
                   background: "var(--bg-primary)",
@@ -550,11 +656,11 @@ export function Sensors() {
               <div className="relative mt-1">
                 <select
                   id="type"
-                  value={formData.type}
+                  value={formData.sensor_type}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
-                      type: e.target.value as "Radar" | "Lidar",
+                      sensor_type: e.target.value as "radar" | "lidar",
                     })
                   }
                   className="w-full appearance-none px-3 py-2 pr-10 rounded cursor-pointer"
@@ -564,8 +670,8 @@ export function Sensors() {
                     color: "var(--text-primary)",
                   }}
                 >
-                  <option value="Radar">Radar</option>
-                  <option value="Lidar">Lidar</option>
+                  <option value="radar">Radar</option>
+                  <option value="lidar">Lidar</option>
                 </select>
                 <ChevronDown
                   size={16}
@@ -603,41 +709,91 @@ export function Sensors() {
 
             <div>
               <Label
-                htmlFor="status"
+                htmlFor="latitude"
                 style={{ color: "var(--text-secondary)" }}
               >
-                Status
+                Latitude
               </Label>
-              <div className="relative mt-1">
-                <select
-                  id="status"
-                  value={formData.status}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      status: e.target.value as
-                        | "Active"
-                        | "Offline"
-                        | "Error",
-                    })
-                  }
-                  className="w-full appearance-none px-3 py-2 pr-10 rounded cursor-pointer"
-                  style={{
-                    background: "var(--bg-primary)",
-                    border: "1px solid var(--border-color)",
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  <option value="Active">Active</option>
-                  <option value="Offline">Offline</option>
-                  <option value="Error">Error</option>
-                </select>
-                <ChevronDown
-                  size={16}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                  style={{ color: "var(--accent-cyan)" }}
-                />
-              </div>
+              <Input
+                id="latitude"
+                type="number"
+                value={formData.lat}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    lat: parseFloat(e.target.value) || 0,
+                  })
+                }
+                placeholder="e.g. 40.7128"
+                min="-90"
+                max="90"
+                step="0.0001"
+                className="mt-1"
+                style={{
+                  background: "var(--bg-primary)",
+                  border: "1px solid var(--border-color)",
+                  color: "var(--text-primary)",
+                }}
+              />
+            </div>
+
+            <div>
+              <Label
+                htmlFor="longitude"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                Longitude
+              </Label>
+              <Input
+                id="longitude"
+                type="number"
+                value={formData.lng}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    lng: parseFloat(e.target.value) || 0,
+                  })
+                }
+                placeholder="e.g. -74.0060"
+                min="-180"
+                max="180"
+                step="0.0001"
+                className="mt-1"
+                style={{
+                  background: "var(--bg-primary)",
+                  border: "1px solid var(--border-color)",
+                  color: "var(--text-primary)",
+                }}
+              />
+            </div>
+
+            <div>
+              <Label
+                htmlFor="coverageRadius"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                Coverage Radius (meters)
+              </Label>
+              <Input
+                id="coverageRadius"
+                type="number"
+                value={formData.coverage_radius_m}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    coverage_radius_m: parseFloat(e.target.value) || 50.0,
+                  })
+                }
+                placeholder="e.g. 50"
+                min="0.1"
+                step="1"
+                className="mt-1"
+                style={{
+                  background: "var(--bg-primary)",
+                  border: "1px solid var(--border-color)",
+                  color: "var(--text-primary)",
+                }}
+              />
             </div>
 
             <div className="flex gap-3 pt-4">
@@ -727,6 +883,35 @@ export function Sensors() {
               Update the details of an existing sensor.
             </DialogDescription>
           </DialogHeader>
+
+          {/* Error Message */}
+          {editError && (
+            <div
+              className="p-3 rounded-lg border text-sm"
+              style={{
+                background: '#FEE2E2',
+                border: '1px solid #FCA5A5',
+                color: '#991B1B',
+              }}
+            >
+              ⚠️ {editError}
+            </div>
+          )}
+
+          {/* Success Message */}
+          {editSuccess && (
+            <div
+              className="p-3 rounded-lg border text-sm"
+              style={{
+                background: '#DCFCE7',
+                border: '1px solid #86EFAC',
+                color: '#166534',
+              }}
+            >
+              ✓ Sensor updated successfully!
+            </div>
+          )}
+
           <div className="space-y-4 mt-4">
             {/* Sensor ID - Disabled */}
             <div>
@@ -734,7 +919,7 @@ export function Sensors() {
                 Sensor ID
               </Label>
               <Input
-                value={formData.id}
+                value={formData.sensor_id}
                 disabled
                 className="mt-1"
                 style={{
@@ -753,7 +938,7 @@ export function Sensors() {
               </Label>
               <div className="relative mt-1">
                 <select
-                  value={formData.type}
+                  value={formData.sensor_type}
                   disabled
                   className="w-full appearance-none px-3 py-2 pr-10 rounded"
                   style={{
@@ -763,8 +948,8 @@ export function Sensors() {
                     cursor: "not-allowed",
                   }}
                 >
-                  <option value="Radar">Radar</option>
-                  <option value="Lidar">Lidar</option>
+                  <option value="radar">Radar</option>
+                  <option value="lidar">Lidar</option>
                 </select>
                 <ChevronDown
                   size={16}
@@ -806,44 +991,114 @@ export function Sensors() {
               />
             </div>
 
-            {/* Status - Editable */}
+            {/* Latitude - Editable */}
             <div>
               <Label
-                htmlFor="edit-status"
+                htmlFor="edit-latitude"
                 style={{ color: "var(--text-secondary)" }}
               >
-                Status
+                Latitude
               </Label>
-              <div className="relative mt-1">
-                <select
-                  id="edit-status"
-                  value={formData.status}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      status: e.target.value as
-                        | "Active"
-                        | "Offline"
-                        | "Error",
-                    })
-                  }
-                  className="w-full appearance-none px-3 py-2 pr-10 rounded cursor-pointer"
-                  style={{
-                    background: "var(--bg-primary)",
-                    border: "1px solid var(--border-color)",
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  <option value="Active">Active</option>
-                  <option value="Offline">Offline</option>
-                  <option value="Error">Error</option>
-                </select>
-                <ChevronDown
-                  size={16}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                  style={{ color: "var(--accent-cyan)" }}
-                />
-              </div>
+              <Input
+                id="edit-latitude"
+                type="number"
+                value={formData.lat}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    lat: parseFloat(e.target.value) || 0,
+                  })
+                }
+                placeholder="e.g. 40.7128"
+                min="-90"
+                max="90"
+                step="0.0001"
+                className="mt-1"
+                style={{
+                  background: "var(--bg-primary)",
+                  border: "1px solid var(--border-color)",
+                  color: "var(--text-primary)",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "var(--accent-cyan)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border-color)";
+                }}
+              />
+            </div>
+
+            {/* Longitude - Editable */}
+            <div>
+              <Label
+                htmlFor="edit-longitude"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                Longitude
+              </Label>
+              <Input
+                id="edit-longitude"
+                type="number"
+                value={formData.lng}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    lng: parseFloat(e.target.value) || 0,
+                  })
+                }
+                placeholder="e.g. -74.0060"
+                min="-180"
+                max="180"
+                step="0.0001"
+                className="mt-1"
+                style={{
+                  background: "var(--bg-primary)",
+                  border: "1px solid var(--border-color)",
+                  color: "var(--text-primary)",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "var(--accent-cyan)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border-color)";
+                }}
+              />
+            </div>
+
+            {/* Coverage Radius - Editable */}
+            <div>
+              <Label
+                htmlFor="edit-coverageRadius"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                Coverage Radius (meters)
+              </Label>
+              <Input
+                id="edit-coverageRadius"
+                type="number"
+                value={formData.coverage_radius_m}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    coverage_radius_m: parseFloat(e.target.value) || 50.0,
+                  })
+                }
+                placeholder="e.g. 50"
+                min="0.1"
+                step="1"
+                className="mt-1"
+                style={{
+                  background: "var(--bg-primary)",
+                  border: "1px solid var(--border-color)",
+                  color: "var(--text-primary)",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "var(--accent-cyan)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border-color)";
+                }}
+              />
             </div>
 
             <div className="flex gap-3 pt-4">
@@ -902,6 +1157,8 @@ export function Sensors() {
           </div>
         </DialogContent>
       </Dialog>
+        </>
+      )}
     </div>
   );
 }

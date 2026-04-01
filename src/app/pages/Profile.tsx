@@ -60,7 +60,7 @@ export function Profile() {
 
       if (!user) return;
 
-      await apiPut(`/api/v1/users/${user.id}`, {
+      await apiPut(`/api/v1/users/${user.user_id}`, {
         username: formData.username,
         email: formData.email,
       });
@@ -94,7 +94,7 @@ export function Profile() {
 
       if (!user) return;
 
-      await apiPut(`/api/v1/users/${user.id}/change-password`, {
+      await apiPut(`/api/v1/users/${user.user_id}/change-password`, {
         old_password: formData.oldPassword,
         new_password: formData.newPassword,
       });

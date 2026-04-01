@@ -6,7 +6,42 @@ import { useWebSocket } from '../context/WebSocketContext'
 import { NotificationBell } from "../components/NotificationBell";
 import { useSensors } from "../context/SensorContext";
 import { apiGet, APIError } from '../services/apiClient';
-import { ThreatLog, ThreatSummaryOut } from '../types/api';
+import { ThreatLog, ThreatSummaryOut, PagedThreats } from '../types/api';
+import { parseISO } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
+
+// Common IANA timezones for date-fns-tz support
+const COMMON_TIMEZONES = [
+  'UTC',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Anchorage',
+  'Pacific/Honolulu',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Moscow',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Bangkok',
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Australia/Sydney',
+  'Australia/Melbourne',
+  'Australia/Perth',
+  'Pacific/Auckland',
+  'Pacific/Fiji',
+  'Africa/Cairo',
+  'Africa/Johannesburg',
+  'America/Toronto',
+  'America/Mexico_City',
+  'America/Buenos_Aires',
+  'America/Sao_Paulo',
+];
 
 export function Threats() {
   const { sensorList, loading: sensorsLoading } = useSensors();
@@ -25,9 +60,8 @@ export function Threats() {
   // Custom date range state
   const [fromDateTime, setFromDateTime] = useState<Date | null>(null)
   const [toDateTime, setToDateTime] = useState<Date | null>(null)
-  const [timezone, setTimezone] = useState(
-    Intl.DateTimeFormat().resolvedOptions().timeZone
-  );
+  const [timezone, setTimezone] = useState<string>('UTC');
+  const [availableThreatTypes, setAvailableThreatTypes] = useState<string[]>([]);
 
   // Fetch initial threats and summary from API
   useEffect(() => {
@@ -35,12 +69,19 @@ export function Threats() {
       try {
         setLoading(true);
         setError(null);
-        const [threats, summary] = await Promise.all([
-          apiGet<ThreatLog[]>('/api/v1/threats'),
+        const [pagedThreats, summary] = await Promise.all([
+          apiGet<PagedThreats>('/api/v1/threats'),
           apiGet<ThreatSummaryOut>('/api/v1/threats/summary'),
         ]);
-        setInitialThreats(threats);
+        // Extract items array from paginated response
+        setInitialThreats(pagedThreats.items);
         setThreatSummary(summary);
+        
+        // Extract available threat types from the fetched data
+        const threatTypes = Array.from(
+          new Set(pagedThreats.items.map(t => t.threat_type).filter(Boolean))
+        );
+        setAvailableThreatTypes(threatTypes);
       } catch (err) {
         const message = err instanceof APIError ? err.message : 'Failed to fetch threats';
         setError(message);
@@ -52,24 +93,24 @@ export function Threats() {
     fetchThreats();
   }, []);
 
-  // Merge initial threats with live threats, deduplicating by id
+  // Merge initial threats with live threats, deduplicating by alert_id
   const allThreats = Array.from(
-    new Map([...initialThreats, ...liveThreats].map(t => [t.id, t])).values()
+    new Map([...initialThreats, ...liveThreats].map(t => [t.alert_id, t])).values()
   );
 
   const stats = {
-    total: threatSummary?.total ?? allThreats.length,
-    high: threatSummary?.high ?? allThreats.filter((t) => t.severity === "High").length,
-    active: threatSummary?.activeSensors ?? 6,
+    total: threatSummary?.total_threats ?? allThreats.length,
+    high: threatSummary?.high_severity_count ?? allThreats.filter((t) => t.severity === "high").length,
+    active: threatSummary?.active_sensor_count ?? 6,
   };
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case "High":
+      case "high":
         return "#DC2626";
-      case "Medium":
+      case "med":
         return "#D97706";
-      case "Low":
+      case "low":
         return "#16A34A";
       default:
         return "#6B7280";
@@ -78,11 +119,11 @@ export function Threats() {
 
   const getSeverityBgColor = (severity: string) => {
     switch (severity) {
-      case "High":
+      case "high":
         return "#FEE2E2";
-      case "Medium":
+      case "med":
         return "#FEF3C7";
-      case "Low":
+      case "low":
         return "#DCFCE7";
       default:
         return "#F3F4F6";
@@ -106,17 +147,17 @@ export function Threats() {
   // Filter threats based on all criteria
   const filteredThreats = allThreats.filter((threat) => {
     // Sensor Type filter
-    if (filterSensorType !== "All" && threat.sensorType !== filterSensorType) {
+    if (filterSensorType !== "All" && threat.sensor_type !== filterSensorType) {
       return false;
     }
 
     // Sensor ID filter
-    if (filterSensorId !== "All" && threat.sensorId !== filterSensorId) {
+    if (filterSensorId !== "All" && threat.sensor_id !== filterSensorId) {
       return false;
     }
 
     // Threat Type filter
-    if (filterThreatType !== "All" && threat.threat !== filterThreatType) {
+    if (filterThreatType !== "All" && threat.threat_type !== filterThreatType) {
       return false;
     }
 
@@ -130,7 +171,7 @@ export function Threats() {
       const parseTime = (timeStr: string): Date => {
         return new Date(timeStr.replace(',', ''))
       }
-      const threatTime = parseTime(threat.time)
+      const threatTime = parseTime(threat.timestamp)
       const now = new Date()
 
       if (filterTime === "Last 30 min") {
@@ -140,9 +181,11 @@ export function Threats() {
       } else if (filterTime === "Last 2 Hours") {
         if (threatTime < new Date(now.getTime() - 2 * 60 * 60 * 1000)) return false
       } else if (filterTime === 'Custom' && fromDateTime && toDateTime) {
-        const threatTime = new Date(new Date(threat.time.replace(',', '')).toLocaleString('en-US', { timeZone: timezone }))
-        const from = new Date(fromDateTime.toLocaleString('en-US', { timeZone: timezone }))
-        const to = new Date(toDateTime.toLocaleString('en-US', { timeZone: timezone }))
+        // Parse ISO timestamp from threat and convert to selected timezone
+        const threatDate = parseISO(threat.timestamp)
+        const threatTime = toZonedTime(threatDate, timezone)
+        const from = toZonedTime(fromDateTime, timezone)
+        const to = toZonedTime(toDateTime, timezone)
         if (threatTime < from || threatTime > to) return false
       }
     }
@@ -465,8 +508,8 @@ export function Threats() {
                 >
                   <option value="All">All</option>
                   {sensorList.map((sensor) => (
-                    <option key={sensor.id} value={sensor.id}>
-                      {sensor.id}
+                    <option key={sensor.sensor_id} value={sensor.sensor_id}>
+                      {sensor.sensor_id}
                     </option>
                   ))}
                 </select>
@@ -507,10 +550,11 @@ export function Threats() {
                   }}
                 >
                   <option value="All">All</option>
-                  <option value="Drone">Drone</option>
-                  <option value="Trespassing">Trespassing</option>
-                  <option value="Weapon">Weapon</option>
-                  <option value="Temperature">Temperature</option>
+                  {availableThreatTypes.map((threatType) => (
+                    <option key={threatType} value={threatType}>
+                      {threatType}
+                    </option>
+                  ))}
                 </select>
                 <ChevronDown
                   size={16}
@@ -549,9 +593,9 @@ export function Threats() {
                   }}
                 >
                   <option value="All">All</option>
-                  <option value="High">High</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Low">Low</option>
+                  <option value="high">High</option>
+                  <option value="med">Medium</option>
+                  <option value="low">Low</option>
                 </select>
                 <ChevronDown
                   size={16}
@@ -680,7 +724,7 @@ export function Threats() {
                         fontSize: "1.00625rem",
                       }}
                     >
-                      {Intl.supportedValuesOf('timeZone').map((tz) => (
+                      {COMMON_TIMEZONES.map((tz) => (
                         <option key={tz} value={tz}>{tz}</option>
                       ))}
                     </select>
@@ -806,7 +850,7 @@ export function Threats() {
                 <tbody>
                   {filteredThreats.map((threat, index) => (
                     <tr
-                      key={threat.id}
+                      key={threat.alert_id}
                       className="border-b transition-all duration-200"
                       style={{
                         background:
@@ -834,7 +878,7 @@ export function Threats() {
                           fontWeight: 600,
                         }}
                       >
-                        {threat.id}
+                        {threat.alert_id}
                       </td>
                       <td
                         className="px-4 py-3"
@@ -843,7 +887,7 @@ export function Threats() {
                           color: "var(--text-primary)",
                         }}
                       >
-                        {threat.threat}
+                        {threat.threat_type}
                       </td>
                       <td
                         className="px-4 py-3"
@@ -853,7 +897,7 @@ export function Threats() {
                           fontFamily: "var(--font-mono)",
                         }}
                       >
-                        {threat.sensorId}
+                        {threat.sensor_id}
                       </td>
                       <td
                         className="px-4 py-3"
@@ -862,7 +906,7 @@ export function Threats() {
                           color: "var(--text-primary)",
                         }}
                       >
-                        {threat.sensorType}
+                        {threat.sensor_type}
                       </td>
                       <td
                         className="px-4 py-3"
@@ -871,7 +915,7 @@ export function Threats() {
                           color: "var(--text-primary)",
                         }}
                       >
-                        {threat.location}
+                        {threat.sensor_id}
                       </td>
                       <td className="px-4 py-3">
                         <span
@@ -900,7 +944,7 @@ export function Threats() {
                           fontFamily: "var(--font-mono)",
                         }}
                       >
-                        {threat.time}
+                        {threat.timestamp}
                       </td>
                     </tr>
                   ))}

@@ -41,11 +41,11 @@ export function LiveAlertsPopup() {
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'High':
+      case 'high':
         return '#DC2626';
-      case 'Medium':
+      case 'med':
         return '#D97706';
-      case 'Low':
+      case 'low':
         return '#16A34A';
       default:
         return '#6B7280';
@@ -121,7 +121,7 @@ export function LiveAlertsPopup() {
       <div className="overflow-y-auto" style={{ maxHeight: '350px' }}>
         {liveAlerts.map((alert, index) => (
           <div
-            key={alert.id}
+            key={alert.alert_id}
             className="px-4 py-3 border-b transition-all duration-300"
             style={{
               borderColor: 'var(--border-color)',
@@ -137,7 +137,7 @@ export function LiveAlertsPopup() {
                   color: getSeverityColor(alert.severity),
                 }}
               >
-                {getIcon(alert.type)}
+                {getIcon(alert.threat_type)}
               </div>
               <div className="flex-1 min-w-0">
                 <div
@@ -147,7 +147,7 @@ export function LiveAlertsPopup() {
                     color: 'var(--text-primary)',
                   }}
                 >
-                  {alert.type}
+                  {alert.threat_type}
                 </div>
                 <div
                   className="truncate"
@@ -156,7 +156,7 @@ export function LiveAlertsPopup() {
                     color: 'var(--text-secondary)',
                   }}
                 >
-                  {alert.description}
+                  Sensor: {alert.sensor_id}
                 </div>
                 <div
                   className="mt-1"

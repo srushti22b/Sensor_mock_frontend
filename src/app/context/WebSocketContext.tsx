@@ -34,7 +34,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         // Prepend new threat to the top of the list
         setLiveThreats((prev) => {
           // Avoid duplicates
-          if (prev.some((t) => t.id === message.payload.id)) {
+          if (prev.some((t) => t.alert_id === message.payload.alert_id)) {
             return prev
           }
           return [message.payload, ...prev]
@@ -45,7 +45,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
       if (message.type === 'SENSOR_UPDATE') {
         // Update the sensor status in SensorContext
-        updateSensor(message.payload.sensorId, {
+        updateSensor(message.payload.sensor_id, {
           status: message.payload.status,
         })
       }

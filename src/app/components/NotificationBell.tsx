@@ -2,28 +2,19 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, X } from 'lucide-react';
 import { useNavigate } from 'react-router';
-
-interface Threat {
-  id: string;
-  threat: string;
-  location: string;
-  severity: 'High' | 'Medium' | 'Low';
-  time: string;
-  sensorType: string;
-  sensorId: string;
-}
+import { ThreatLog } from '../types/api';
 
 interface Notification {
   id: string;
   type: string;
   description: string;
   timestamp: string;
-  severity: 'High' | 'Medium' | 'Low';
+  severity: string;
   isRead: boolean;
 }
 
 interface NotificationBellProps {
-  liveThreats?: Threat[];
+  liveThreats?: ThreatLog[];
 }
 
 const globalSeenIds = new Set<string>()
@@ -44,12 +35,12 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
 
   // First time this runs — mark all existing threats as seen silently
   if (notifications.length === 0) {
-    liveThreats.forEach((t) => globalSeenIds.add(t.id))
+    liveThreats.forEach((t) => globalSeenIds.add(t.alert_id))
     const initialNotifications: Notification[] = liveThreats.slice(0, 10).map((t) => ({
-      id: t.id,
-      type: t.threat,
-      description: `${t.threat} detected at ${t.location}`,
-      timestamp: t.time,
+      id: t.alert_id,
+      type: t.threat_type,
+      description: `${t.threat_type} detected by ${t.sensor_id}`,
+      timestamp: t.timestamp,
       severity: t.severity,
       isRead: true,
     }))
@@ -59,14 +50,14 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
 
   // After init — only process genuinely new threats
   liveThreats.forEach((threat) => {
-    if (!globalSeenIds.has(threat.id)) {
-      globalSeenIds.add(threat.id)
+    if (!globalSeenIds.has(threat.alert_id)) {
+      globalSeenIds.add(threat.alert_id)
 
       const newNotification: Notification = {
-        id: threat.id,
-        type: threat.threat,
-        description: `${threat.threat} detected at ${threat.location}`,
-        timestamp: threat.time,
+        id: threat.alert_id,
+        type: threat.threat_type,
+        description: `${threat.threat_type} detected by ${threat.sensor_id}`,
+        timestamp: threat.timestamp,
         severity: threat.severity,
         isRead: false,
       }
@@ -75,7 +66,7 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
       setToasts((prev) => [...prev, newNotification])
 
       setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== threat.id))
+        setToasts((prev) => prev.filter((t) => t.id !== threat.alert_id))
       }, 5000)
     }
   })
@@ -86,12 +77,14 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
   };
 
   const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'High':
+    switch (severity?.toLowerCase()) {
+      case 'high':
+      case 'critical':
         return '#DC2626';
-      case 'Medium':
+      case 'med':
+      case 'medium':
         return '#D97706';
-      case 'Low':
+      case 'low':
         return '#16A34A';
       default:
         return '#6B7280';

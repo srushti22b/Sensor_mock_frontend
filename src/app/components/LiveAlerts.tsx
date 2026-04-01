@@ -40,11 +40,11 @@ export function LiveAlerts() {
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'High':
+      case 'high':
         return '#DC2626';
-      case 'Medium':
+      case 'med':
         return '#D97706';
-      case 'Low':
+      case 'low':
         return '#16A34A';
       default:
         return '#6B7280';
@@ -53,11 +53,11 @@ export function LiveAlerts() {
 
   const getSeverityBgColor = (severity: string) => {
     switch (severity) {
-      case 'High':
+      case 'high':
         return '#FEE2E2';
-      case 'Medium':
+      case 'med':
         return '#FEF3C7';
-      case 'Low':
+      case 'low':
         return '#DCFCE7';
       default:
         return '#F3F4F6';
@@ -113,7 +113,7 @@ export function LiveAlerts() {
           
           return (
             <div
-              key={alert.id}
+              key={alert.alert_id}
               className={`rounded-lg transition-all duration-500 ${
                 alert.isNew ? 'animate-in slide-in-from-right' : ''
               }`}
@@ -132,7 +132,7 @@ export function LiveAlerts() {
                     background: `${severityColor}15`,
                   }}
                 >
-                  {getIcon(alert.threat)}
+                  {getIcon(alert.threat_type)}
                 </div>
 
                 {/* Content */}
@@ -147,7 +147,7 @@ export function LiveAlerts() {
                         lineHeight: 1.2,
                       }}
                     >
-                      {alert.threat?.toUpperCase() || 'UNKNOWN'} DETECTED
+                      {alert.threat_type?.toUpperCase() || 'UNKNOWN'} DETECTED
                     </h4>
                     {alert.isNew && (
                       <span
