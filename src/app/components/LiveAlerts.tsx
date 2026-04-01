@@ -1,43 +1,27 @@
 import { useState, useEffect } from 'react';
 import { AlertTriangle, User, Flame, Sword } from 'lucide-react';
-import { threats, LiveAlert } from '../data/mockData';
+import { useWebSocket } from '../context/WebSocketContext';
+import { ThreatLog } from '../types/api';
+
+interface LiveAlert extends ThreatLog {
+  isNew?: boolean;
+}
 
 export function LiveAlerts() {
-  const [alerts, setAlerts] = useState<LiveAlert[]>(
-    threats.slice(0, 5).map((t) => ({ ...t, isNew: false }))
-  );
+  const { liveThreats } = useWebSocket();
+  const [displayAlerts, setDisplayAlerts] = useState<LiveAlert[]>([]);
 
-  // Simulate new alerts coming in
+  // Update display alerts when live threats change
   useEffect(() => {
-    const interval = setInterval(() => {
-      const randomThreat = threats[Math.floor(Math.random() * threats.length)];
-      const newAlert: LiveAlert = {
-        ...randomThreat,
-        id: `T-${Date.now()}`,
-        time: new Date().toLocaleString('en-GB', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        isNew: true,
-      };
-
-      setAlerts((prev) => {
-        const updated = [newAlert, ...prev.slice(0, 9)];
-        // Remove isNew flag after animation
-        setTimeout(() => {
-          setAlerts((current) =>
-            current.map((a) => (a.id === newAlert.id ? { ...a, isNew: false } : a))
-          );
-        }, 500);
-        return updated;
-      });
-    }, 8000);
-
-    return () => clearInterval(interval);
-  }, []);
+    if (liveThreats && liveThreats.length > 0) {
+      // Take top 10 threats and mark recently added ones as new
+      const newAlerts = liveThreats.slice(0, 10).map((threat, index) => ({
+        ...threat,
+        isNew: index === 0, // Only the first (most recent) one is marked as new
+      }));
+      setDisplayAlerts(newAlerts);
+    }
+  }, [liveThreats]);
 
   const getIcon = (threat: string) => {
     switch (threat) {
@@ -80,11 +64,7 @@ export function LiveAlerts() {
     }
   };
 
-  const handleAcknowledge = (id: string) => {
-    setAlerts((prev) =>
-      prev.map((alert) => (alert.id === id ? { ...alert, isNew: false } : alert))
-    );
-  };
+
 
   return (
     <div
@@ -116,7 +96,18 @@ export function LiveAlerts() {
 
       {/* Alert List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {alerts.map((alert, index) => {
+        {displayAlerts.length === 0 ? (
+          <div
+            style={{
+              textAlign: 'center',
+              color: 'var(--text-secondary)',
+              paddingTop: '20px',
+            }}
+          >
+            Waiting for alerts...
+          </div>
+        ) : (
+          displayAlerts.map((alert, index) => {
           const severityColor = getSeverityColor(alert.severity);
           const severityBgColor = getSeverityBgColor(alert.severity);
           
@@ -193,7 +184,8 @@ export function LiveAlerts() {
               </div>
             </div>
           );
-        })}
+          })
+        )}
       </div>
     </div>
   );

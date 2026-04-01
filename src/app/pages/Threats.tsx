@@ -1,14 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import { ChevronDown, ChevronLeft, ChevronRight, RotateCcw, Calendar, Clock } from "lucide-react";
 import { useWebSocket } from '../context/WebSocketContext'
 import { NotificationBell } from "../components/NotificationBell";
 import { useSensors } from "../context/SensorContext";
+import { apiGet, APIError } from '../services/apiClient';
+import { ThreatLog, ThreatSummaryOut } from '../types/api';
 
 export function Threats() {
-  const { sensorList } = useSensors();
-  const { liveThreats: threats } = useWebSocket()
+  const { sensorList, loading: sensorsLoading } = useSensors();
+  const { liveThreats } = useWebSocket()
+  const [initialThreats, setInitialThreats] = useState<ThreatLog[]>([]);
+  const [threatSummary, setThreatSummary] = useState<ThreatSummaryOut | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
   const [filterTime, setFilterTime] = useState("All");
   const [filterSensorType, setFilterSensorType] = useState("All");
   const [filterSensorId, setFilterSensorId] = useState("All");
@@ -22,10 +29,38 @@ export function Threats() {
     Intl.DateTimeFormat().resolvedOptions().timeZone
   );
 
+  // Fetch initial threats and summary from API
+  useEffect(() => {
+    const fetchThreats = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const [threats, summary] = await Promise.all([
+          apiGet<ThreatLog[]>('/api/v1/threats'),
+          apiGet<ThreatSummaryOut>('/api/v1/threats/summary'),
+        ]);
+        setInitialThreats(threats);
+        setThreatSummary(summary);
+      } catch (err) {
+        const message = err instanceof APIError ? err.message : 'Failed to fetch threats';
+        setError(message);
+        console.error('[Threats] Error fetching:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchThreats();
+  }, []);
+
+  // Merge initial threats with live threats, deduplicating by id
+  const allThreats = Array.from(
+    new Map([...initialThreats, ...liveThreats].map(t => [t.id, t])).values()
+  );
+
   const stats = {
-    total: threats.length,
-    high: threats.filter((t) => t.severity === "High").length,
-    active: 6,
+    total: threatSummary?.total ?? allThreats.length,
+    high: threatSummary?.high ?? allThreats.filter((t) => t.severity === "High").length,
+    active: threatSummary?.activeSensors ?? 6,
   };
 
   const getSeverityColor = (severity: string) => {
@@ -69,7 +104,7 @@ export function Threats() {
   };
 
   // Filter threats based on all criteria
-  const filteredThreats = threats.filter((threat) => {
+  const filteredThreats = allThreats.filter((threat) => {
     // Sensor Type filter
     if (filterSensorType !== "All" && threat.sensorType !== filterSensorType) {
       return false;
@@ -176,7 +211,50 @@ export function Threats() {
       `}</style>
       <div className="p-6 space-y-6">
       {/* Notification Bell */}
-      <NotificationBell liveThreats={threats} />
+      <NotificationBell liveThreats={allThreats} />
+
+      {/* Error Message */}
+      {error && (
+        <div
+          className="p-4 rounded-lg border flex items-center justify-between"
+          style={{
+            background: '#FEE2E2',
+            border: '1px solid #FCA5A5',
+            color: '#991B1B',
+          }}
+        >
+          <span>⚠️ {error}</span>
+          <button
+            onClick={() => window.location.reload()}
+            className="flex items-center gap-2 px-3 py-1 rounded transition-colors"
+            style={{
+              background: '#991B1B',
+              color: '#FFFFFF',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+            }}
+          >
+            <RotateCcw size={16} />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Loading State */}
+      {loading && !error && (
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <div
+              className="inline-block animate-spin rounded-full h-8 w-8 border-b-2"
+              style={{ borderColor: '#0284C7' }}
+            />
+            <p style={{ color: 'var(--text-secondary)', marginTop: '1rem', fontSize: '0.875rem' }}>
+              Loading threats...
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Page Header */}
       <div>
@@ -202,7 +280,8 @@ export function Threats() {
         </h1>
       </div>
 
-      {/* Summary Stats */}
+      {!loading && !error && (
+        <>
       <div className="grid grid-cols-3 gap-4">
         {[
           {
@@ -831,6 +910,8 @@ export function Threats() {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
     </>
   );

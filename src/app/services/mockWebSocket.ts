@@ -1,133 +1,110 @@
-import { Threat } from '../data/mockData'
+import { WS_URL } from './apiClient'
+import { WebSocketMessage, NewThreatMessage, SensorUpdateMessage } from '../types/api'
 
-// All possible threat types and locations to randomly generate from
-const THREAT_TYPES = ['Drone', 'Trespassing', 'Weapon', 'Temperature']
-const SENSOR_POOL = [
-  { id: 'R-001', type: 'Radar' as const, location: 'North Gate' },
-  { id: 'R-002', type: 'Radar' as const, location: 'South Perimeter' },
-  { id: 'R-003', type: 'Radar' as const, location: 'Main Entry' },
-  { id: 'L-001', type: 'Lidar' as const, location: 'Server Room' },
-  { id: 'L-002', type: 'Lidar' as const, location: 'East Fence' },
-  { id: 'L-003', type: 'Lidar' as const, location: 'West Wall' },
-]
-const SEVERITIES = ['High', 'Medium', 'Low'] as const
-const STATUS_OPTIONS = ['Active', 'Offline', 'Error'] as const
-
-// Message types — exactly what FastAPI would send over WebSocket
-export type WSMessageType =
-  | 'NEW_THREAT'        // A new threat was detected
-  | 'SENSOR_UPDATE'     // A sensor changed status
-
-export interface NewThreatMessage {
-  type: 'NEW_THREAT'
-  payload: Threat
-}
-
-export interface SensorUpdateMessage {
-  type: 'SENSOR_UPDATE'
-  payload: {
-    sensorId: string
-    status: 'Active' | 'Offline' | 'Error'
-  }
-}
-
-export type WSMessage = NewThreatMessage | SensorUpdateMessage
-
-// Counter to generate unique threat IDs
-let threatCounter = 26 // starts after TH-025
-
-function generateThreatId(): string {
-  const id = `TH-${String(threatCounter).padStart(3, '0')}`
-  threatCounter++
-  return id
-}
-
-function getCurrentTimestamp(): string {
-  return new Date().toLocaleString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function randomFrom<T>(arr: readonly T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)]
-}
-
-// Generate a fake NEW_THREAT message
-function generateThreatMessage(): NewThreatMessage {
-  const sensor = randomFrom(SENSOR_POOL)
-  return {
-    type: 'NEW_THREAT',
-    payload: {
-      id: generateThreatId(),
-      threat: randomFrom(THREAT_TYPES),
-      sensorId: sensor.id,
-      sensorType: sensor.type,
-      location: sensor.location,
-      severity: randomFrom(SEVERITIES),
-      time: getCurrentTimestamp(),
-    },
-  }
-}
-
-// Generate a fake SENSOR_UPDATE message
-function generateSensorUpdateMessage(): SensorUpdateMessage {
-  const sensor = randomFrom(SENSOR_POOL)
-  return {
-    type: 'SENSOR_UPDATE',
-    payload: {
-      sensorId: sensor.id,
-      status: randomFrom(STATUS_OPTIONS),
-    },
-  }
-}
+export type WSMessage = NewThreatMessage | SensorUpdateMessage | WebSocketMessage
 
 // ─────────────────────────────────────────────
-// MockWebSocketService
-// This class pretends to be a WebSocket connection
-// to your FastAPI backend. It fires events on a
-// timer exactly like real sensor data would arrive.
+// WebSocketService
+// Real WebSocket connection to FastAPI backend
+// with automatic reconnection and error handling
 // ─────────────────────────────────────────────
-export class MockWebSocketService {
+export class WebSocketService {
   private listeners: ((message: WSMessage) => void)[] = []
-  private threatInterval: ReturnType<typeof setInterval> | null = null
-  private sensorInterval: ReturnType<typeof setInterval> | null = null
+  private ws: WebSocket | null = null
   private isConnected = false
+  private reconnectAttempt = 0
+  private maxReconnectAttempts = 30 // 30 seconds max wait
+  private messageQueue: WSMessage[] = []
 
-  // Start the mock — call this once when app loads
+  private reconnectDelay(): number {
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, etc., up to 30s max
+    const delay = Math.min(Math.pow(2, this.reconnectAttempt) * 1000, 30000)
+    return delay
+  }
+
+  /**
+   * Connect to WebSocket server
+   */
   connect() {
-    if (this.isConnected) return
-    this.isConnected = true
+    if (this.isConnected || this.ws) {
+      console.log('[WebSocket] Already connected or connecting')
+      return
+    }
 
-    console.log('[MockWS] Connected — simulating live sensor data')
+    console.log('[WebSocket] Connecting to', WS_URL)
 
-    // Send a new THREAT every 10 seconds
-    this.threatInterval = setInterval(() => {
-      const message = generateThreatMessage()
-      console.log('[MockWS] NEW_THREAT →', message.payload)
-      this.emit(message)
-    }, 10000)
+    try {
+      this.ws = new WebSocket(WS_URL)
 
-    // Send a SENSOR_UPDATE every 20 seconds
-    this.sensorInterval = setInterval(() => {
-      const message = generateSensorUpdateMessage()
-      console.log('[MockWS] SENSOR_UPDATE →', message.payload)
-      this.emit(message)
-    }, 20000)
+      this.ws.onopen = () => {
+        console.log('[WebSocket] Connected')
+        this.isConnected = true
+        this.reconnectAttempt = 0
+
+        // Send any queued messages
+        while (this.messageQueue.length > 0) {
+          const message = this.messageQueue.shift()
+          if (message && this.ws) {
+            this.ws.send(JSON.stringify(message))
+          }
+        }
+      }
+
+      this.ws.onmessage = (event) => {
+        try {
+          const message: WSMessage = JSON.parse(event.data)
+          console.log('[WebSocket] Message received:', message.type, message.payload)
+          this.emit(message)
+        } catch (error) {
+          console.error('[WebSocket] Failed to parse message:', error)
+        }
+      }
+
+      this.ws.onerror = (error) => {
+        console.error('[WebSocket] Error:', error)
+      }
+
+      this.ws.onclose = () => {
+        console.log('[WebSocket] Disconnected')
+        this.isConnected = false
+        this.ws = null
+
+        // Auto-reconnect with exponential backoff
+        if (this.reconnectAttempt < 30) {
+          const delay = this.reconnectDelay()
+          console.log(`[WebSocket] Reconnecting in ${delay}ms...`)
+          this.reconnectAttempt++
+
+          setTimeout(() => {
+            this.connect()
+          }, delay)
+        } else {
+          console.error('[WebSocket] Max reconnection attempts reached')
+        }
+      }
+    } catch (error) {
+      console.error('[WebSocket] Connection failed:', error)
+    }
   }
 
-  // Stop the mock — call this on cleanup
+  /**
+   * Disconnect from WebSocket server
+   */
   disconnect() {
-    if (this.threatInterval) clearInterval(this.threatInterval)
-    if (this.sensorInterval) clearInterval(this.sensorInterval)
+    if (this.ws) {
+      this.ws.close()
+      this.ws = null
+    }
     this.isConnected = false
-    console.log('[MockWS] Disconnected')
+    this.listeners = []
+    console.log('[WebSocket] Disconnected')
   }
 
-  // Subscribe to incoming messages
+  /**
+   * Subscribe to incoming messages
+   * @param listener - Callback function to receive messages
+   * @returns Unsubscribe function
+   */
   onMessage(listener: (message: WSMessage) => void) {
     this.listeners.push(listener)
     // Return unsubscribe function
@@ -136,10 +113,40 @@ export class MockWebSocketService {
     }
   }
 
+  /**
+   * Send a message to the server
+   * @param message - Message object to send
+   */
+  send(message: WSMessage) {
+    if (this.isConnected && this.ws) {
+      this.ws.send(JSON.stringify(message))
+    } else {
+      // Queue message if not connected
+      this.messageQueue.push(message)
+      console.log('[WebSocket] Message queued - not connected')
+    }
+  }
+
+  /**
+   * Get connection status
+   */
+  getIsConnected(): boolean {
+    return this.isConnected
+  }
+
+  /**
+   * Emit message to all listeners
+   */
   private emit(message: WSMessage) {
-    this.listeners.forEach((listener) => listener(message))
+    this.listeners.forEach((listener) => {
+      try {
+        listener(message)
+      } catch (error) {
+        console.error('[WebSocket] Listener error:', error)
+      }
+    })
   }
 }
 
 // Export a single shared instance — used across the whole app
-export const mockWS = new MockWebSocketService()
+export const mockWS = new WebSocketService()

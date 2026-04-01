@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import {
@@ -16,21 +16,23 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
-import {
-  threats as mockThreats,
-  sensorActivityHeatmap as mockHeatmap,
-} from '../data/mockData';
 import { Download, ChevronDown, RotateCcw } from 'lucide-react';
 import { NotificationBell } from '../components/NotificationBell';
 import { useWebSocket } from '../context/WebSocketContext';
+import { apiGet, APIError } from '../services/apiClient';
+import { ThreatTimelineItem, ThreatPerSensor, SeverityBreakdown, ThreatLog } from '../types/api';
 
 export function Visualization() {
   const { liveThreats } = useWebSocket();
   
-  // Merge mock threats with live threats, removing duplicates by id
-  const allThreats = Array.from(
-    new Map([...mockThreats, ...liveThreats].map(t => [t.id, t])).values()
-  );
+  // State for fetched analytics data
+  const [threatsOverTimeData, setThreatsOverTimeData] = useState<ThreatTimelineItem[]>([]);
+  const [threatsByLocationData, setThreatsByLocationData] = useState<any[]>([]);
+  const [threatTypeDistributionData, setThreatTypeDistributionData] = useState<any[]>([]);
+  const [sensorActivityData, setSensorActivityData] = useState<any[]>([]);
+  const [allThreats, setAllThreats] = useState<ThreatLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Filter state
   const [filterTimeRange, setFilterTimeRange] = useState('Last 7 Days');
@@ -41,13 +43,71 @@ export function Visualization() {
   const [fromDateTime, setFromDateTime] = useState<Date | null>(null);
   const [toDateTime, setToDateTime] = useState<Date | null>(null);
 
+  // Fetch analytics data
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const [timeline, perSensor, severity, threats] = await Promise.all([
+          apiGet<ThreatTimelineItem[]>('/api/v1/analytics/threat-timeline'),
+          apiGet<ThreatPerSensor[]>('/api/v1/analytics/threats-per-sensor'),
+          apiGet<SeverityBreakdown[]>('/api/v1/analytics/severity-breakdown'),
+          apiGet<ThreatLog[]>('/api/v1/threats'),
+        ]);
+        
+        setThreatsOverTimeData(timeline);
+        setSensorActivityData(perSensor.map(item => ({ sensor: item.sensorId, count: item.count })));
+        
+        // Transform severity breakdown for pie chart
+        const colorMap: { [key: string]: string } = {
+          High: '#FF3B3B',
+          Medium: '#FF9F0A',
+          Low: '#16A34A',
+        };
+        setThreatTypeDistributionData(
+          severity.map(item => ({
+            name: item.severity,
+            value: item.count,
+            color: colorMap[item.severity] || '#999999',
+          }))
+        );
+        
+        setAllThreats(threats);
+        
+        // Derive threats by location from threats data
+        const locationMap: { [key: string]: number } = {};
+        threats.forEach((threat) => {
+          locationMap[threat.location] = (locationMap[threat.location] || 0) + 1;
+        });
+        setThreatsByLocationData(
+          Object.entries(locationMap)
+            .map(([location, count]) => ({ location, count }))
+            .sort((a, b) => b.count - a.count)
+        );
+      } catch (err) {
+        const message = err instanceof APIError ? err.message : 'Failed to fetch analytics';
+        setError(message);
+        console.error('[Visualization] Error fetching:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAnalytics();
+  }, []);
+
   // Helper function to parse threat time
   const parseTime = (timeStr: string): Date => {
     return new Date(timeStr.replace(',', ''));
   };
 
+  // Merge API threats with live threats, removing duplicates by id
+  const mergedThreats = Array.from(
+    new Map([...allThreats, ...liveThreats].map(t => [t.id, t])).values()
+  );
+
   // Filter threats based on all criteria
-  const filteredThreats = allThreats.filter((threat) => {
+  const filteredThreats = mergedThreats.filter((threat) => {
     // Location filter
     if (filterLocation !== 'All' && threat.location !== filterLocation) {
       return false;
@@ -90,90 +150,6 @@ export function Visualization() {
 
     return true;
   });
-
-  // Helper function to get time bucket based on range
-  const getTimeBucket = (date: Date, range: string): string => {
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    
-    if (range === 'Last 30 Min' || range === 'Last 1 Hour') {
-      // Group by minute
-      return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-    } else {
-      // Group by day (for Last 24 Hours, Last 7 Days, Last 30 Days, Custom)
-      return `${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
-    }
-  };
-
-  // Derive chart data
-  const threatsOverTimeData = (() => {
-    if (filteredThreats.length === 0) return [];
-    
-    const buckets: { [key: string]: number } = {};
-    filteredThreats.forEach((threat) => {
-      const bucket = getTimeBucket(parseTime(threat.time), filterTimeRange);
-      buckets[bucket] = (buckets[bucket] || 0) + 1;
-    });
-    
-    return Object.entries(buckets)
-      .map(([time, count]) => ({ time, count }))
-      .sort((a, b) => a.time.localeCompare(b.time));
-  })();
-
-  const threatsByLocationData = (() => {
-    if (filteredThreats.length === 0) return [];
-    
-    const locations: { [key: string]: number } = {};
-    filteredThreats.forEach((threat) => {
-      locations[threat.location] = (locations[threat.location] || 0) + 1;
-    });
-    
-    return Object.entries(locations)
-      .map(([location, count]) => ({ location, count }))
-      .sort((a, b) => b.count - a.count);
-  })();
-
-  const threatTypeDistributionData = (() => {
-    if (filteredThreats.length === 0) return [];
-    
-    const types: { [key: string]: number } = {};
-    filteredThreats.forEach((threat) => {
-      types[threat.threat] = (types[threat.threat] || 0) + 1;
-    });
-
-    const colorMap: { [key: string]: string } = {
-      Drone: '#FF3B3B',
-      Trespassing: '#FF9F0A',
-      Temperature: '#FFCC00',
-      Weapon: '#CC0000',
-    };
-
-    return Object.entries(types)
-      .map(([name, value]) => ({
-        name,
-        value,
-        color: colorMap[name] || '#999999',
-      }));
-  })();
-
-  const sensorActivityHeatmapData = (() => {
-    if (filteredThreats.length === 0) return [];
-    
-    // Get unique sensor IDs from all threats
-    const sensors = Array.from(new Set(mockThreats.map(t => t.sensorId)));
-    
-    const heatmapData = sensors.map((sensor) => {
-      const hours = Array(24).fill(0);
-      filteredThreats
-        .filter((threat) => threat.sensorId === sensor)
-        .forEach((threat) => {
-          const hour = parseTime(threat.time).getHours();
-          hours[hour]++;
-        });
-      return { sensor, hours };
-    });
-    
-    return heatmapData;
-  })();
 
   // Reset filters
   const resetFilters = () => {
@@ -273,7 +249,51 @@ export function Visualization() {
           </h1>
         </div>
 
-        {/* Filter Bar */}
+        {/* Error Message */}
+        {error && (
+          <div
+            className="p-4 rounded-lg border flex items-center justify-between"
+            style={{
+              background: '#FEE2E2',
+              border: '1px solid #FCA5A5',
+              color: '#991B1B',
+            }}
+          >
+            <span>⚠️ {error}</span>
+            <button
+              onClick={() => window.location.reload()}
+              className="flex items-center gap-2 px-3 py-1 rounded transition-colors"
+              style={{
+                background: '#991B1B',
+                color: '#FFFFFF',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+              }}
+            >
+              <RotateCcw size={16} />
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Loading State */}
+        {loading && !error && (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <div
+                className="inline-block animate-spin rounded-full h-8 w-8 border-b-2"
+                style={{ borderColor: '#0284C7' }}
+              />
+              <p style={{ color: 'var(--text-secondary)', marginTop: '1rem', fontSize: '0.875rem' }}>
+                Loading analytics...
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!loading && !error && (
+          <>
         <div>
           <div
             className="rounded-lg p-4"
@@ -813,7 +833,21 @@ export function Visualization() {
             ) : (
               <div className="w-full h-[250px] overflow-auto">
                 <div className="min-w-[600px]">
-                  {sensorActivityHeatmapData.map((sensorData) => (
+                  {(() => {
+                    // Derive heatmap data from filtered threats
+                    const sensorSet = new Set(mergedThreats.map(t => t.sensorId));
+                    const heatmapData = Array.from(sensorSet).map((sensorId) => {
+                      const hours = Array(24).fill(0);
+                      filteredThreats
+                        .filter((threat) => threat.sensorId === sensorId)
+                        .forEach((threat) => {
+                          const hour = parseTime(threat.time).getHours();
+                          hours[hour]++;
+                        });
+                      return { sensor: sensorId, hours };
+                    });
+                    return heatmapData;
+                  })().map((sensorData: any) => (
                     <div
                       key={sensorData.sensor}
                       className="flex items-center gap-2 mb-1"
@@ -829,7 +863,7 @@ export function Visualization() {
                         {sensorData.sensor}
                       </div>
                       <div className="flex gap-1 flex-1">
-                        {sensorData.hours.map((activity, hourIdx) => {
+                        {sensorData.hours.map((activity: number, hourIdx: number) => {
                           const intensity = activity / 12;
                           return (
                             <div
@@ -872,6 +906,8 @@ export function Visualization() {
             )}
           </ChartCard>
         </div>
+        </>
+        )}
       </div>
     </>
   );

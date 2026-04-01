@@ -6,34 +6,41 @@ import {
   ReactNode,
 } from 'react'
 import { mockWS, WSMessage } from '../services/mockWebSocket'
-import { Threat, threats as initialThreats } from '../data/mockData'
+import { ThreatLog } from '../types/api'
 import { useSensors } from './SensorContext'
 
 interface WebSocketContextType {
-  liveThreats: Threat[]        // All threats including new live ones
+  liveThreats: ThreatLog[]        // All threats including new live ones
   isConnected: boolean
 }
 
 const WebSocketContext = createContext<WebSocketContextType>({
-  liveThreats: initialThreats,
+  liveThreats: [],
   isConnected: false,
 })
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
   const { updateSensor } = useSensors()
-  const [liveThreats, setLiveThreats] = useState<Threat[]>(initialThreats)
+  const [liveThreats, setLiveThreats] = useState<ThreatLog[]>([])
   const [isConnected, setIsConnected] = useState(false)
 
   useEffect(() => {
-    // Start the mock WebSocket
+    // Start the real WebSocket connection
     mockWS.connect()
-    setIsConnected(true)
 
     // Listen for incoming messages
     const unsubscribe = mockWS.onMessage((message: WSMessage) => {
       if (message.type === 'NEW_THREAT') {
         // Prepend new threat to the top of the list
-        setLiveThreats((prev) => [message.payload, ...prev])
+        setLiveThreats((prev) => {
+          // Avoid duplicates
+          if (prev.some((t) => t.id === message.payload.id)) {
+            return prev
+          }
+          return [message.payload, ...prev]
+        })
+        // Update connection status
+        setIsConnected(true)
       }
 
       if (message.type === 'SENSOR_UPDATE') {
@@ -44,13 +51,16 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       }
     })
 
+    // Set connected status after initial setup
+    setIsConnected(true)
+
     // Cleanup on unmount
     return () => {
       unsubscribe()
       mockWS.disconnect()
       setIsConnected(false)
     }
-  }, [])
+  }, [updateSensor])
 
   return (
     <WebSocketContext.Provider value={{ liveThreats, isConnected }}>

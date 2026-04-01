@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Sensor } from "../data/mockData";
+import { SensorOut } from "../types/api";
 import {
   Dialog,
   DialogContent,
@@ -9,18 +9,19 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { ChevronDown, MoreVertical, Plus } from "lucide-react";
+import { ChevronDown, MoreVertical, Plus, RotateCcw } from "lucide-react";
 import { NotificationBell } from "../components/NotificationBell";
 import { useSensors } from "../context/SensorContext";
 import { useWebSocket } from "../context/WebSocketContext";
 
 export function Sensors() {
-  const { sensorList, updateSensor, addSensor } = useSensors();
+  const { sensorList, updateSensor, addSensor, fetchSensors, loading, error } = useSensors();
   const { liveThreats: threats } = useWebSocket();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingSensor, setEditingSensor] = useState<Sensor | null>(null);
+  const [editingSensor, setEditingSensor] = useState<SensorOut | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     id: "",
     type: "Radar" as "Radar" | "Lidar",
@@ -58,7 +59,7 @@ export function Sensors() {
     setIsModalOpen(true);
   };
 
-  const openEditModal = (sensor: Sensor) => {
+  const openEditModal = (sensor: SensorOut) => {
     setEditingSensor(sensor);
     setFormData({
       id: sensor.id,
@@ -69,42 +70,97 @@ export function Sensors() {
     setIsEditModalOpen(true);
   };
 
-  const handleSaveAdd = () => {
-    const newSensor: Sensor = {
-      id: formData.id,
-      type: formData.type,
-      status: formData.status,
-      location: formData.location,
-      lastUpdated: new Date().toLocaleString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      position: { x: 50, y: 50 },
-      coverageRadius: formData.type === "Radar" ? 15 : 12,
-    };
-    addSensor(newSensor);
-    setIsModalOpen(false);
+  const handleSaveAdd = async () => {
+    try {
+      setIsSubmitting(true);
+      const newSensor: Omit<SensorOut, 'id'> = {
+        type: formData.type,
+        status: formData.status,
+        location: formData.location,
+        lastUpdated: new Date().toLocaleString("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        position: { x: 50, y: 50 },
+        coverageRadius: formData.type === "Radar" ? 15 : 12,
+      };
+      await addSensor(newSensor);
+      setIsModalOpen(false);
+    } catch (err) {
+      console.error('Failed to add sensor:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (editingSensor) {
-      updateSensor(editingSensor.id, {
-        location: formData.location,
-        status: formData.status,
-        // Do NOT update lastUpdated - keep original timestamp
-      });
+      try {
+        setIsSubmitting(true);
+        await updateSensor(editingSensor.id, {
+          location: formData.location,
+          status: formData.status,
+        });
+        setIsEditModalOpen(false);
+        setEditingSensor(null);
+      } catch (err) {
+        console.error('Failed to update sensor:', err);
+      } finally {
+        setIsSubmitting(false);
+      }
     }
-    setIsEditModalOpen(false);
-    setEditingSensor(null);
   };
 
   return (
     <div className="p-6 space-y-6">
       {/* Notification Bell */}
       <NotificationBell liveThreats={threats} />
+
+      {/* Error Message */}
+      {error && (
+        <div
+          className="p-4 rounded-lg border flex items-center justify-between"
+          style={{
+            background: '#FEE2E2',
+            border: '1px solid #FCA5A5',
+            color: '#991B1B',
+          }}
+        >
+          <span>⚠️ {error}</span>
+          <button
+            onClick={() => fetchSensors()}
+            className="flex items-center gap-2 px-3 py-1 rounded transition-colors"
+            style={{
+              background: '#991B1B',
+              color: '#FFFFFF',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+            }}
+          >
+            <RotateCcw size={16} />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Loading State */}
+      {loading && !error && (
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <div
+              className="inline-block animate-spin rounded-full h-8 w-8 border-b-2"
+              style={{ borderColor: '#0284C7' }}
+            />
+            <p style={{ color: 'var(--text-secondary)', marginTop: '1rem', fontSize: '0.875rem' }}>
+              Loading sensors...
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Page Header with Add Sensor Button */}
       <div className="flex items-start justify-between">
@@ -135,7 +191,8 @@ export function Sensors() {
         <div style={{ marginTop: '40px' }}>
           <button
             onClick={openAddModal}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-lg transition-all duration-200"
+            disabled={loading}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg transition-all duration-200 disabled:opacity-50"
             style={{
               background: '#0284C7',
               color: '#FFFFFF',
@@ -144,10 +201,13 @@ export function Sensors() {
               textTransform: 'uppercase',
               border: 'none',
               letterSpacing: '0.025em',
+              cursor: loading ? 'not-allowed' : 'pointer',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#0369A1';
-              e.currentTarget.style.transform = 'scale(1.02)';
+              if (!loading) {
+                e.currentTarget.style.background = '#0369A1';
+                e.currentTarget.style.transform = 'scale(1.02)';
+              }
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = '#0284C7';
@@ -160,7 +220,8 @@ export function Sensors() {
         </div>
       </div>
 
-      {/* Summary Stats */}
+      {!loading && !error && (
+        <>
       <div className="grid grid-cols-4 gap-4">
         {[
           {
@@ -419,6 +480,8 @@ export function Sensors() {
           </div>
         </div>
       </div>
+        </>
+      )}
 
       {/* Add Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
@@ -580,17 +643,21 @@ export function Sensors() {
             <div className="flex gap-3 pt-4">
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="flex-1 px-4 py-2 rounded transition-all duration-200"
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 rounded transition-all duration-200 disabled:opacity-50"
                 style={{
                   fontSize: "1.00625rem",
                   fontWeight: 600,
                   color: "var(--text-secondary)",
                   border: "1px solid var(--border-color)",
                   background: "transparent",
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "var(--accent-cyan)";
-                  e.currentTarget.style.color = "var(--accent-cyan)";
+                  if (!isSubmitting) {
+                    e.currentTarget.style.borderColor = "var(--accent-cyan)";
+                    e.currentTarget.style.color = "var(--accent-cyan)";
+                  }
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = "var(--border-color)";
@@ -601,22 +668,26 @@ export function Sensors() {
               </button>
               <button
                 onClick={handleSaveAdd}
-                className="flex-1 px-4 py-2 rounded transition-all duration-200"
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 rounded transition-all duration-200 disabled:opacity-50"
                 style={{
                   fontSize: "1.00625rem",
                   fontWeight: 600,
                   background: "var(--accent-cyan)",
                   color: "#FFFFFF",
                   border: "none",
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "#0369A1";
+                  if (!isSubmitting) {
+                    e.currentTarget.style.background = "#0369A1";
+                  }
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "var(--accent-cyan)";
                 }}
               >
-                SAVE
+                {isSubmitting ? 'SAVING...' : 'SAVE'}
               </button>
             </div>
           </div>
@@ -781,17 +852,21 @@ export function Sensors() {
                   setIsEditModalOpen(false);
                   setEditingSensor(null);
                 }}
-                className="flex-1 px-4 py-2 rounded transition-all duration-200"
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 rounded transition-all duration-200 disabled:opacity-50"
                 style={{
                   fontSize: "1.00625rem",
                   fontWeight: 600,
                   color: "var(--text-secondary)",
                   border: "1px solid var(--border-color)",
                   background: "transparent",
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "var(--accent-cyan)";
-                  e.currentTarget.style.color = "var(--accent-cyan)";
+                  if (!isSubmitting) {
+                    e.currentTarget.style.borderColor = "var(--accent-cyan)";
+                    e.currentTarget.style.color = "var(--accent-cyan)";
+                  }
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = "var(--border-color)";
@@ -802,22 +877,26 @@ export function Sensors() {
               </button>
               <button
                 onClick={handleSaveEdit}
-                className="flex-1 px-4 py-2 rounded transition-all duration-200"
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 rounded transition-all duration-200 disabled:opacity-50"
                 style={{
                   fontSize: "1.00625rem",
                   fontWeight: 600,
                   background: "var(--accent-cyan)",
                   color: "#FFFFFF",
                   border: "none",
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "#0369A1";
+                  if (!isSubmitting) {
+                    e.currentTarget.style.background = "#0369A1";
+                  }
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "var(--accent-cyan)";
                 }}
               >
-                SAVE CHANGES
+                {isSubmitting ? 'SAVING...' : 'SAVE CHANGES'}
               </button>
             </div>
           </div>

@@ -1,48 +1,28 @@
 import { useState, useEffect } from 'react';
 import { X, Bell, Shield, User, Flame, Plane } from 'lucide-react';
-import { threats, LiveAlert } from '../data/mockData';
+import { useWebSocket } from '../context/WebSocketContext';
+import { ThreatLog } from '../types/api';
+
+interface LiveAlert extends ThreatLog {
+  isNew?: boolean;
+}
 
 export function LiveAlertsPopup() {
+  const { liveThreats } = useWebSocket();
   const [isOpen, setIsOpen] = useState(true);
-  const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>(
-    threats.slice(0, 3).map((t) => ({ ...t, isNew: false }))
-  );
+  const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
 
+  // Update display alerts when live threats change
   useEffect(() => {
-    // Simulate real-time alerts every 8 seconds
-    const interval = setInterval(() => {
-      const randomThreat = threats[Math.floor(Math.random() * threats.length)];
-      const newAlert: LiveAlert = {
-        ...randomThreat,
-        id: `T-${Date.now()}`,
-        timestamp: new Date().toLocaleString('en-GB', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }),
-        isNew: true,
-      };
-
-      setLiveAlerts((prev) => {
-        const updated = [newAlert, ...prev.slice(0, 2)];
-        return updated;
-      });
-
-      // Remove new flag after 2 seconds
-      setTimeout(() => {
-        setLiveAlerts((prev) =>
-          prev.map((alert) =>
-            alert.id === newAlert.id ? { ...alert, isNew: false } : alert
-          )
-        );
-      }, 2000);
-    }, 8000);
-
-    return () => clearInterval(interval);
-  }, []);
+    if (liveThreats && liveThreats.length > 0) {
+      // Take top 3 threats
+      const newAlerts = liveThreats.slice(0, 3).map((threat, index) => ({
+        ...threat,
+        isNew: index === 0,
+      }));
+      setLiveAlerts(newAlerts);
+    }
+  }, [liveThreats]);
 
   const getIcon = (type: string) => {
     switch (type) {
