@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, X } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -22,22 +22,16 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showPanel, setShowPanel] = useState(false);
   const [toasts, setToasts] = useState<Notification[]>([]);
-  const [seenIds, setSeenIds] = useState<Set<string>>(new Set()); // Local state for each instance
+  const seenIdsRef = useRef<Set<string>>(new Set()); // Use ref to track seen IDs without triggering re-renders
   
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
-  
-
-
-
   useEffect(() => {
-    if (liveThreats.length === 0) return
+    if (liveThreats.length === 0) return;
 
     // First time this runs — mark all existing threats as seen silently
     if (notifications.length === 0) {
-      const newSeenIds = new Set(seenIds)
-      liveThreats.forEach((t) => newSeenIds.add(t.alert_id))
-      setSeenIds(newSeenIds)
+      liveThreats.forEach((t) => seenIdsRef.current.add(t.alert_id));
       
       const initialNotifications: Notification[] = liveThreats.slice(0, 10).map((t) => ({
         id: t.alert_id,
@@ -46,17 +40,15 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
         timestamp: t.timestamp,
         severity: t.severity,
         isRead: true,
-      }))
-      setNotifications(initialNotifications)
-      return // stop here — no toasts on initial load
+      }));
+      setNotifications(initialNotifications);
+      return; // stop here — no toasts on initial load
     }
 
     // After init — only process genuinely new threats
     liveThreats.forEach((threat) => {
-      if (!seenIds.has(threat.alert_id)) {
-        const newSeenIds = new Set(seenIds)
-        newSeenIds.add(threat.alert_id)
-        setSeenIds(newSeenIds)
+      if (!seenIdsRef.current.has(threat.alert_id)) {
+        seenIdsRef.current.add(threat.alert_id);
 
         const newNotification: Notification = {
           id: threat.alert_id,
@@ -65,17 +57,17 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
           timestamp: threat.timestamp,
           severity: threat.severity,
           isRead: false,
-        }
+        };
 
-        setNotifications((prev) => [newNotification, ...prev.slice(0, 9)])
-        setToasts((prev) => [...prev, newNotification])
+        setNotifications((prev) => [newNotification, ...prev.slice(0, 9)]);
+        setToasts((prev) => [...prev, newNotification]);
 
         setTimeout(() => {
-          setToasts((prev) => prev.filter((t) => t.id !== threat.alert_id))
-        }, 5000)
+          setToasts((prev) => prev.filter((t) => t.id !== threat.alert_id));
+        }, 5000);
       }
-    })
-  }, [liveThreats, seenIds, notifications])
+    });
+  }, [liveThreats]); // Only depend on liveThreats to avoid re-render loops
 
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

@@ -77,9 +77,9 @@ export function ThreatMap() {
         </svg>
 
         {/* Drone Path */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none">
+        <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100">
           <path
-            d="M 20% 30% Q 50% 10%, 80% 40% T 70% 70%"
+            d="M 20 30 Q 50 10 80 40 T 70 70"
             fill="none"
             stroke="#DC2626"
             strokeWidth="2"

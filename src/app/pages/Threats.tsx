@@ -3,7 +3,6 @@ import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import { ChevronDown, ChevronLeft, ChevronRight, RotateCcw, Calendar, Clock } from "lucide-react";
 import { useWebSocket } from '../context/WebSocketContext'
-import { NotificationBell } from "../components/NotificationBell";
 import { useSensors } from "../context/SensorContext";
 import { apiGet, APIError } from '../services/apiClient';
 import { ThreatLog, ThreatSummaryOut, PagedThreats } from '../types/api';
@@ -138,6 +137,26 @@ export function Threats() {
     fetchThreats(null, true);
   }, [filterTime, filterSensorType, filterSensorId, filterThreatType, filterSeverity, fromDateTime, toDateTime]);
 
+  // Listen for new WebSocket threats and prepend to displayed list
+  useEffect(() => {
+    if (liveThreats.length === 0) return;
+
+    setThreats((prevThreats) => {
+      // Find threats in liveThreats that aren't in prevThreats (new threats)
+      const newThreats = liveThreats.filter(
+        (liveThreat) => !prevThreats.some((t) => t.alert_id === liveThreat.alert_id)
+      );
+
+      // If there are new threats, prepend them
+      if (newThreats.length > 0) {
+        console.log(`[Threats] Adding ${newThreats.length} new WebSocket threat(s) to display`);
+        return [...newThreats, ...prevThreats];
+      }
+
+      return prevThreats;
+    });
+  }, [liveThreats]);
+
   // Infinite scroll handler
   const handleScroll = useCallback(() => {
     if (!tableContainerRef.current || loadingMore || !hasMore) return;
@@ -265,9 +284,6 @@ export function Threats() {
         }
       `}</style>
       <div className="p-6 space-y-6">
-      {/* Notification Bell */}
-      <NotificationBell liveThreats={threats} />
-
       {/* Error Message */}
       {error && (
         <div
