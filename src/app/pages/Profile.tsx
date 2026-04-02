@@ -5,11 +5,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { NotificationBell } from '../components/NotificationBell';
+import { useWebSocket } from '../context/WebSocketContext';
 import { apiGet, apiPut, APIError } from '../services/apiClient';
 import { UserOut } from '../types/api';
 
 export function Profile() {
   const navigate = useNavigate();
+  const { liveThreats } = useWebSocket();
   const [user, setUser] = useState<UserOut | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
@@ -125,7 +127,7 @@ export function Profile() {
   return (
     <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-6" style={{ background: 'var(--bg-primary)' }}>
       {/* Notification Bell */}
-      <NotificationBell />
+      <NotificationBell liveThreats={liveThreats} />
 
       {loading ? (
         <div className="text-center">

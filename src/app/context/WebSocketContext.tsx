@@ -31,6 +31,12 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     // Listen for incoming messages
     const unsubscribe = mockWS.onMessage((message: WSMessage) => {
       if (message.type === 'NEW_THREAT') {
+        // Only add threats with valid alert_id
+        if (!message.payload.alert_id) {
+          console.warn('[WebSocket] Received threat without alert_id, skipping:', message.payload)
+          return
+        }
+
         // Prepend new threat to the top of the list
         setLiveThreats((prev) => {
           // Avoid duplicates

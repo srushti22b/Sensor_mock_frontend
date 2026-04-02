@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import { ChevronDown, ChevronLeft, ChevronRight, RotateCcw, Calendar, Clock } from "lucide-react";
@@ -46,9 +46,10 @@ const COMMON_TIMEZONES = [
 export function Threats() {
   const { sensorList, loading: sensorsLoading } = useSensors();
   const { liveThreats } = useWebSocket()
-  const [initialThreats, setInitialThreats] = useState<ThreatLog[]>([]);
+  const [threats, setThreats] = useState<ThreatLog[]>([]);
   const [threatSummary, setThreatSummary] = useState<ThreatSummaryOut | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   const [filterTime, setFilterTime] = useState("All");
@@ -62,45 +63,105 @@ export function Threats() {
   const [toDateTime, setToDateTime] = useState<Date | null>(null)
   const [timezone, setTimezone] = useState<string>('UTC');
   const [availableThreatTypes, setAvailableThreatTypes] = useState<string[]>([]);
+  
+  // Pagination state
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch initial threats and summary from API
-  useEffect(() => {
-    const fetchThreats = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const [pagedThreats, summary] = await Promise.all([
-          apiGet<PagedThreats>('/api/v1/threats'),
-          apiGet<ThreatSummaryOut>('/api/v1/threats/summary'),
-        ]);
-        // Extract items array from paginated response
-        setInitialThreats(pagedThreats.items);
-        setThreatSummary(summary);
-        
+  // Fetch threats with filters and pagination
+  const fetchThreats = useCallback(async (cursor: string | null = null, isInitial: boolean = false) => {
+    try {
+      if (isInitial) setLoading(true);
+      else setLoadingMore(true);
+      setError(null);
+
+      const params = new URLSearchParams();
+      
+      // Add filter parameters
+      if (filterSensorType !== "All") params.append("sensor_type", filterSensorType.toLowerCase());
+      if (filterSensorId !== "All") params.append("sensor_id", filterSensorId);
+      if (filterSeverity !== "All") params.append("severity", filterSeverity);
+      
+      // Add date range filters if custom range is selected
+      if (filterTime === "Custom" && fromDateTime && toDateTime) {
+        const fromISO = fromDateTime.toISOString();
+        const toISO = toDateTime.toISOString();
+        params.append("from_dt", fromISO);
+        params.append("to_dt", toISO);
+      }
+      
+      if (cursor) params.append("cursor", cursor);
+      params.append("page_size", "20");
+
+      const url = `/api/v1/threats?${params.toString()}`;
+      const [pagedThreats, summary] = await Promise.all([
+        apiGet<PagedThreats>(url),
+        isInitial ? apiGet<ThreatSummaryOut>('/api/v1/threats/summary') : Promise.resolve(null),
+      ]);
+      
+      if (isInitial) {
+        setThreats(pagedThreats.items);
         // Extract available threat types from the fetched data
         const threatTypes = Array.from(
           new Set(pagedThreats.items.map(t => t.threat_type).filter(Boolean))
         );
         setAvailableThreatTypes(threatTypes);
-      } catch (err) {
-        const message = err instanceof APIError ? err.message : 'Failed to fetch threats';
-        setError(message);
-        console.error('[Threats] Error fetching:', err);
-      } finally {
-        setLoading(false);
+      } else {
+        // For pagination, append new items
+        setThreats(prev => [...prev, ...pagedThreats.items]);
       }
-    };
-    fetchThreats();
+      
+      setNextCursor(pagedThreats.next_cursor);
+      setHasMore(pagedThreats.has_more);
+      
+      if (summary) {
+        setThreatSummary(summary);
+      }
+    } catch (err) {
+      const message = err instanceof APIError ? err.message : 'Failed to fetch threats';
+      setError(message);
+      console.error('[Threats] Error fetching:', err);
+    } finally {
+      if (isInitial) setLoading(false);
+      else setLoadingMore(false);
+    }
+  }, [filterSensorType, filterSensorId, filterSeverity, filterTime, fromDateTime, toDateTime]);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchThreats(null, true);
   }, []);
 
-  // Merge initial threats with live threats, deduplicating by alert_id
-  const allThreats = Array.from(
-    new Map([...initialThreats, ...liveThreats].map(t => [t.alert_id, t])).values()
-  );
+  // Refetch when filters change (reset to first page)
+  useEffect(() => {
+    fetchThreats(null, true);
+  }, [filterTime, filterSensorType, filterSensorId, filterThreatType, filterSeverity, fromDateTime, toDateTime]);
+
+  // Infinite scroll handler
+  const handleScroll = useCallback(() => {
+    if (!tableContainerRef.current || loadingMore || !hasMore) return;
+
+    const element = tableContainerRef.current;
+    const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
+
+    if (isAtBottom && nextCursor) {
+      fetchThreats(nextCursor, false);
+    }
+  }, [nextCursor, hasMore, loadingMore, fetchThreats]);
+
+  // Setup infinite scroll listener
+  useEffect(() => {
+    const container = tableContainerRef.current;
+    if (!container) return;
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [handleScroll]);
 
   const stats = {
-    total: threatSummary?.total_threats ?? allThreats.length,
-    high: threatSummary?.high_severity_count ?? allThreats.filter((t) => t.severity === "high").length,
+    total: threatSummary?.total_threats ?? threats.length,
+    high: threatSummary?.high_severity_count ?? threats.filter((t) => t.severity === "high").length,
     active: threatSummary?.active_sensor_count ?? 6,
   };
 
@@ -130,10 +191,6 @@ export function Threats() {
     }
   };
 
-  const handleTimeRangeChange = (value: string) => {
-    setFilterTime(value);
-  };
-
   const resetFilters = () => {
     setFilterTime("All");
     setFilterSensorType("All");
@@ -144,54 +201,9 @@ export function Threats() {
     setToDateTime(null)
   };
 
-  // Filter threats based on all criteria
-  const filteredThreats = allThreats.filter((threat) => {
-    // Sensor Type filter
-    if (filterSensorType !== "All" && threat.sensor_type !== filterSensorType) {
-      return false;
-    }
-
-    // Sensor ID filter
-    if (filterSensorId !== "All" && threat.sensor_id !== filterSensorId) {
-      return false;
-    }
-
-    // Threat Type filter
-    if (filterThreatType !== "All" && threat.threat_type !== filterThreatType) {
-      return false;
-    }
-
-    // Severity filter
-    if (filterSeverity !== "All" && threat.severity !== filterSeverity) {
-      return false;
-    }
-
-    // Time filter
-    if (filterTime !== "All") {
-      const parseTime = (timeStr: string): Date => {
-        return new Date(timeStr.replace(',', ''))
-      }
-      const threatTime = parseTime(threat.timestamp)
-      const now = new Date()
-
-      if (filterTime === "Last 30 min") {
-        if (threatTime < new Date(now.getTime() - 30 * 60 * 1000)) return false
-      } else if (filterTime === "Last 1 Hour") {
-        if (threatTime < new Date(now.getTime() - 60 * 60 * 1000)) return false
-      } else if (filterTime === "Last 2 Hours") {
-        if (threatTime < new Date(now.getTime() - 2 * 60 * 60 * 1000)) return false
-      } else if (filterTime === 'Custom' && fromDateTime && toDateTime) {
-        // Parse ISO timestamp from threat and convert to selected timezone
-        const threatDate = parseISO(threat.timestamp)
-        const threatTime = toZonedTime(threatDate, timezone)
-        const from = toZonedTime(fromDateTime, timezone)
-        const to = toZonedTime(toDateTime, timezone)
-        if (threatTime < from || threatTime > to) return false
-      }
-    }
-
-    return true;
-  });
+  const handleTimeRangeChange = (value: string) => {
+    setFilterTime(value);
+  };
 
   return (
     <>
@@ -254,7 +266,7 @@ export function Threats() {
       `}</style>
       <div className="p-6 space-y-6">
       {/* Notification Bell */}
-      <NotificationBell liveThreats={allThreats} />
+      <NotificationBell liveThreats={threats} />
 
       {/* Error Message */}
       {error && (
@@ -467,8 +479,8 @@ export function Threats() {
                   }}
                 >
                   <option value="All">All</option>
-                  <option value="Radar">Radar</option>
-                  <option value="Lidar">Lidar</option>
+                  <option value="radar">Radar</option>
+                  <option value="lidar">Lidar</option>
                 </select>
                 <ChevronDown
                   size={16}
@@ -789,6 +801,7 @@ export function Threats() {
           }}
         >
           <div 
+            ref={tableContainerRef}
             className="overflow-auto"
             style={{
               maxHeight: "calc(100vh - 420px)",
@@ -848,108 +861,145 @@ export function Threats() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredThreats.map((threat, index) => (
-                    <tr
-                      key={threat.alert_id}
-                      className="border-b transition-all duration-200"
-                      style={{
-                        background:
-                          index % 2 === 0
-                            ? "var(--bg-card)"
-                            : "var(--bg-table-alt)",
-                        borderColor: "var(--border-color)",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "var(--bg-hover)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background =
-                          index % 2 === 0
-                            ? "var(--bg-card)"
-                            : "var(--bg-table-alt)";
-                      }}
-                    >
-                      <td
-                        className="px-4 py-3"
+                  {threats.length === 0 && !loading ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center">
+                        <div style={{
+                          fontSize: "1rem",
+                          color: "var(--text-secondary)",
+                        }}>
+                          No threats found matching the current filters.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    threats.map((threat, index) => (
+                      <tr
+                        key={threat.alert_id}
+                        className="border-b transition-all duration-200"
                         style={{
-                          fontSize: "1.00625rem",
-                          color: "var(--accent-cyan)",
-                          fontFamily: "var(--font-mono)",
-                          fontWeight: 600,
+                          background:
+                            index % 2 === 0
+                              ? "var(--bg-card)"
+                              : "var(--bg-table-alt)",
+                          borderColor: "var(--border-color)",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "var(--bg-hover)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background =
+                            index % 2 === 0
+                              ? "var(--bg-card)"
+                              : "var(--bg-table-alt)";
                         }}
                       >
-                        {threat.alert_id}
-                      </td>
-                      <td
-                        className="px-4 py-3"
-                        style={{
-                          fontSize: "1.00625rem",
-                          color: "var(--text-primary)",
-                        }}
-                      >
-                        {threat.threat_type}
-                      </td>
-                      <td
-                        className="px-4 py-3"
-                        style={{
-                          fontSize: "1.00625rem",
-                          color: "var(--text-primary)",
-                          fontFamily: "var(--font-mono)",
-                        }}
-                      >
-                        {threat.sensor_id}
-                      </td>
-                      <td
-                        className="px-4 py-3"
-                        style={{
-                          fontSize: "1.00625rem",
-                          color: "var(--text-primary)",
-                        }}
-                      >
-                        {threat.sensor_type}
-                      </td>
-                      <td
-                        className="px-4 py-3"
-                        style={{
-                          fontSize: "1.00625rem",
-                          color: "var(--text-primary)",
-                        }}
-                      >
-                        {threat.sensor_id}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
+                        <td
+                          className="px-4 py-3"
                           style={{
-                            background: getSeverityBgColor(threat.severity),
-                            color: getSeverityColor(threat.severity),
-                            fontSize: "0.865rem",
+                            fontSize: "1.00625rem",
+                            color: "var(--accent-cyan)",
+                            fontFamily: "var(--font-mono)",
                             fontWeight: 600,
                           }}
                         >
+                          {threat.alert_id}
+                        </td>
+                        <td
+                          className="px-4 py-3"
+                          style={{
+                            fontSize: "1.00625rem",
+                            color: "var(--text-primary)",
+                          }}
+                        >
+                          {threat.threat_type}
+                        </td>
+                        <td
+                          className="px-4 py-3"
+                          style={{
+                            fontSize: "1.00625rem",
+                            color: "var(--text-primary)",
+                            fontFamily: "var(--font-mono)",
+                          }}
+                        >
+                          {threat.sensor_id}
+                        </td>
+                        <td
+                          className="px-4 py-3"
+                          style={{
+                            fontSize: "1.00625rem",
+                            color: "var(--text-primary)",
+                          }}
+                        >
+                          {threat.sensor_type}
+                        </td>
+                        <td
+                          className="px-4 py-3"
+                          style={{
+                            fontSize: "1.00625rem",
+                            color: "var(--text-primary)",
+                          }}
+                        >
+                          {sensorList.find(s => s.sensor_id === threat.sensor_id)?.location || "Unknown"}
+                        </td>
+                        <td className="px-4 py-3">
                           <span
-                            className="w-2 h-2 rounded-full"
+                            className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
                             style={{
-                              background: getSeverityColor(threat.severity),
+                              background: getSeverityBgColor(threat.severity),
+                              color: getSeverityColor(threat.severity),
+                              fontSize: "0.865rem",
+                              fontWeight: 600,
                             }}
-                          />
-                          {threat.severity}
-                        </span>
-                      </td>
-                      <td
-                        className="px-4 py-3"
-                        style={{
-                          fontSize: "0.865rem",
-                          color: "var(--text-secondary)",
-                          fontFamily: "var(--font-mono)",
-                        }}
-                      >
-                        {threat.timestamp}
-                      </td>
-                    </tr>
-                  ))}
+                          >
+                            <span
+                              className="w-2 h-2 rounded-full"
+                              style={{
+                                background: getSeverityColor(threat.severity),
+                              }}
+                            />
+                            {threat.severity}
+                          </span>
+                        </td>
+                        <td
+                          className="px-4 py-3"
+                          style={{
+                            fontSize: "0.865rem",
+                            color: "var(--text-secondary)",
+                            fontFamily: "var(--font-mono)",
+                          }}
+                        >
+                          {new Date(threat.timestamp).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
+              
+              {/* Loading More Indicator */}
+              {loadingMore && (
+                <div className="px-4 py-6 text-center border-t" style={{ borderColor: 'var(--border-color)' }}>
+                  <div className="flex items-center justify-center gap-2">
+                    <div
+                      className="inline-block animate-spin rounded-full h-5 w-5 border-b-2"
+                      style={{ borderColor: '#0284C7' }}
+                    />
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                      Loading more threats...
+                    </span>
+                  </div>
+                </div>
+              )}
+              
+              {/* End of List Indicator */}
+              {!hasMore && threats.length > 0 && (
+                <div className="px-4 py-6 text-center border-t" style={{ borderColor: 'var(--border-color)' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                    End of threat log
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>

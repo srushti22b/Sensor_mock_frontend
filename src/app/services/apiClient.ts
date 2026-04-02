@@ -56,6 +56,8 @@ export async function apiFetch<T = any>(
         errorMessage = 'Validation error: Invalid request data'
       } else if (response.status === 404) {
         errorMessage = 'Resource not found'
+      } else if (response.status === 422) {
+        errorMessage = 'Validation error: Invalid data submitted'
       } else if (response.status === 500) {
         errorMessage = 'Service unavailable: Backend error'
       }
@@ -64,7 +66,20 @@ export async function apiFetch<T = any>(
       try {
         const errorData = await response.json()
         if (errorData.detail) {
-          errorMessage = errorData.detail
+          // Handle Pydantic validation errors (array of error objects)
+          if (Array.isArray(errorData.detail)) {
+            const messages = errorData.detail.map((err: any) => {
+              if (typeof err === 'object' && err.msg) {
+                return err.msg
+              }
+              return typeof err === 'string' ? err : JSON.stringify(err)
+            })
+            errorMessage = messages.join('; ')
+          } else if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail
+          } else if (typeof errorData.detail === 'object') {
+            errorMessage = JSON.stringify(errorData.detail)
+          }
         }
       } catch {
         // Response is not JSON, use default message

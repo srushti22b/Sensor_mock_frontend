@@ -553,8 +553,8 @@ export function Visualization() {
                     }}
                   >
                     <option value="All">All</option>
-                    <option value="Radar">Radar</option>
-                    <option value="Lidar">Lidar</option>
+                    <option value="radar">Radar</option>
+                    <option value="lidar">Lidar</option>
                   </select>
                   <ChevronDown
                     size={16}

@@ -17,12 +17,12 @@ interface NotificationBellProps {
   liveThreats?: ThreatLog[];
 }
 
-const globalSeenIds = new Set<string>()
 export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showPanel, setShowPanel] = useState(false);
   const [toasts, setToasts] = useState<Notification[]>([]);
+  const [seenIds, setSeenIds] = useState<Set<string>>(new Set()); // Local state for each instance
   
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
@@ -31,46 +31,51 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
 
 
   useEffect(() => {
-  if (liveThreats.length === 0) return
+    if (liveThreats.length === 0) return
 
-  // First time this runs — mark all existing threats as seen silently
-  if (notifications.length === 0) {
-    liveThreats.forEach((t) => globalSeenIds.add(t.alert_id))
-    const initialNotifications: Notification[] = liveThreats.slice(0, 10).map((t) => ({
-      id: t.alert_id,
-      type: t.threat_type,
-      description: `${t.threat_type} detected by ${t.sensor_id}`,
-      timestamp: t.timestamp,
-      severity: t.severity,
-      isRead: true,
-    }))
-    setNotifications(initialNotifications)
-    return // stop here — no toasts on initial load
-  }
-
-  // After init — only process genuinely new threats
-  liveThreats.forEach((threat) => {
-    if (!globalSeenIds.has(threat.alert_id)) {
-      globalSeenIds.add(threat.alert_id)
-
-      const newNotification: Notification = {
-        id: threat.alert_id,
-        type: threat.threat_type,
-        description: `${threat.threat_type} detected by ${threat.sensor_id}`,
-        timestamp: threat.timestamp,
-        severity: threat.severity,
-        isRead: false,
-      }
-
-      setNotifications((prev) => [newNotification, ...prev.slice(0, 9)])
-      setToasts((prev) => [...prev, newNotification])
-
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== threat.alert_id))
-      }, 5000)
+    // First time this runs — mark all existing threats as seen silently
+    if (notifications.length === 0) {
+      const newSeenIds = new Set(seenIds)
+      liveThreats.forEach((t) => newSeenIds.add(t.alert_id))
+      setSeenIds(newSeenIds)
+      
+      const initialNotifications: Notification[] = liveThreats.slice(0, 10).map((t) => ({
+        id: t.alert_id,
+        type: t.threat_type,
+        description: `${t.threat_type} detected by ${t.sensor_id}`,
+        timestamp: t.timestamp,
+        severity: t.severity,
+        isRead: true,
+      }))
+      setNotifications(initialNotifications)
+      return // stop here — no toasts on initial load
     }
-  })
-}, [liveThreats])
+
+    // After init — only process genuinely new threats
+    liveThreats.forEach((threat) => {
+      if (!seenIds.has(threat.alert_id)) {
+        const newSeenIds = new Set(seenIds)
+        newSeenIds.add(threat.alert_id)
+        setSeenIds(newSeenIds)
+
+        const newNotification: Notification = {
+          id: threat.alert_id,
+          type: threat.threat_type,
+          description: `${threat.threat_type} detected by ${threat.sensor_id}`,
+          timestamp: threat.timestamp,
+          severity: threat.severity,
+          isRead: false,
+        }
+
+        setNotifications((prev) => [newNotification, ...prev.slice(0, 9)])
+        setToasts((prev) => [...prev, newNotification])
+
+        setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== threat.alert_id))
+        }, 5000)
+      }
+    })
+  }, [liveThreats, seenIds, notifications])
 
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -319,42 +324,75 @@ export function NotificationBell({ liveThreats = [] }: NotificationBellProps) {
             display: 'flex',
             flexDirection: 'column',
             gap: '8px',
-            pointerEvents: 'none',
           }}
         >
           {toasts.map((toast) => (
             <div
               key={toast.id}
               style={{
-                pointerEvents: 'auto',
                 background: '#FFFFFF',
-                width: '300px',
+                width: '320px',
                 borderLeft: `4px solid ${getSeverityColor(toast.severity)}`,
                 borderRadius: '8px',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-                padding: '12px 16px',
+                padding: '12px',
                 animation: 'slideInToast 0.3s ease-out',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '12px',
+                position: 'relative',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: '8px' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1E293B', marginBottom: '4px' }}>
-                    {toast.type} Detected
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B', marginBottom: '4px' }}>
-                    {toast.description}
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: '#9CA3AF', fontFamily: 'monospace' }}>
-                    {toast.timestamp}
-                  </div>
+              {/* Content */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1E293B', marginBottom: '4px' }}>
+                  {toast.type} Detected
                 </div>
-                <button
-                  onClick={() => removeToast(toast.id)}
-                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '16px', lineHeight: 1, padding: '0' }}
-                >
-                  ×
-                </button>
+                <div style={{ fontSize: '0.8rem', color: '#64748B', marginBottom: '4px' }}>
+                  {toast.description}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: '#9CA3AF', fontFamily: 'monospace' }}>
+                  {toast.timestamp}
+                </div>
               </div>
+
+              {/* Close Button - Smaller */}
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  removeToast(toast.id);
+                }}
+                style={{ 
+                  background: 'transparent', 
+                  border: 'none', 
+                  cursor: 'pointer', 
+                  color: '#CBD5E1', 
+                  fontSize: '16px', 
+                  lineHeight: '1',
+                  padding: '0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '3px',
+                  transition: 'all 0.2s ease',
+                  marginTop: '-2px',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#F1F5F9';
+                  e.currentTarget.style.color = '#DC2626';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = '#CBD5E1';
+                }}
+                title="Dismiss notification"
+              >
+                ✕
+              </button>
             </div>
           ))}
         </div>,

@@ -11,6 +11,7 @@ export function LiveAlertsPopup() {
   const { liveThreats } = useWebSocket();
   const [isOpen, setIsOpen] = useState(true);
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
+  const [closedAlerts, setClosedAlerts] = useState<Set<string>>(new Set());
 
   // Update display alerts when live threats change
   useEffect(() => {
@@ -23,6 +24,14 @@ export function LiveAlertsPopup() {
       setLiveAlerts(newAlerts);
     }
   }, [liveThreats]);
+
+  const handleCloseAlert = (alertId: string) => {
+    const newClosedAlerts = new Set(closedAlerts);
+    newClosedAlerts.add(alertId);
+    setClosedAlerts(newClosedAlerts);
+  };
+
+  const filteredAlerts = liveAlerts.filter(alert => !closedAlerts.has(alert.alert_id));
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -119,7 +128,7 @@ export function LiveAlertsPopup() {
 
       {/* Alerts List */}
       <div className="overflow-y-auto" style={{ maxHeight: '350px' }}>
-        {liveAlerts.map((alert, index) => (
+        {filteredAlerts.map((alert, index) => (
           <div
             key={alert.alert_id}
             className="px-4 py-3 border-b transition-all duration-300"
@@ -169,6 +178,21 @@ export function LiveAlertsPopup() {
                   {alert.timestamp}
                 </div>
               </div>
+              <button
+                onClick={() => handleCloseAlert(alert.alert_id)}
+                className="p-1 rounded transition-all duration-200 flex-shrink-0"
+                style={{ color: 'var(--text-secondary)' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#F0F9FF';
+                  e.currentTarget.style.color = 'var(--accent-cyan)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = 'var(--text-secondary)';
+                }}
+              >
+                <X size={16} />
+              </button>
             </div>
           </div>
         ))}
