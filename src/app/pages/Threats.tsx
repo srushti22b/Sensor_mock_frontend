@@ -68,6 +68,61 @@ export function Threats() {
   const [hasMore, setHasMore] = useState(true);
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
+  // Helper function to format UTC timestamp in the selected timezone
+  const formatTimestampInTimezone = (utcTimestamp: string): string => {
+    try {
+      return new Date(utcTimestamp).toLocaleString('en-US', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+      });
+    } catch {
+      return utcTimestamp; // Fallback if timezone is invalid
+    }
+  };
+
+  // Helper function to calculate from_dt and to_dt based on selected time range
+  // Always returns UTC timestamps in ISO 8601 format (with Z suffix)
+  const calculateDateRange = (): { from_dt: string | null; to_dt: string | null } => {
+    const now = new Date();
+    let from: Date | null = null;
+    let to: Date | null = now;
+
+    switch (filterTime) {
+      case "All":
+        return { from_dt: null, to_dt: null };
+      case "Last 30 min":
+        from = new Date(now.getTime() - 30 * 60 * 1000);
+        break;
+      case "Last 1 hour":
+        from = new Date(now.getTime() - 60 * 60 * 1000);
+        break;
+      case "Last 24 hours":
+        from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case "Last 7 days":
+        from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case "Last 30 days":
+        from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case "Custom":
+        from = fromDateTime;
+        to = toDateTime;
+        break;
+    }
+
+    return {
+      from_dt: from ? from.toISOString() : null,
+      to_dt: to ? to.toISOString() : null,
+    };
+  };
+
   // Fetch threats with filters and pagination
   const fetchThreats = useCallback(async (cursor: string | null = null, isInitial: boolean = false) => {
     try {
@@ -81,14 +136,12 @@ export function Threats() {
       if (filterSensorType !== "All") params.append("sensor_type", filterSensorType.toLowerCase());
       if (filterSensorId !== "All") params.append("sensor_id", filterSensorId);
       if (filterSeverity !== "All") params.append("severity", filterSeverity);
+      if (filterThreatType !== "All") params.append("threat_type", filterThreatType);
       
-      // Add date range filters if custom range is selected
-      if (filterTime === "Custom" && fromDateTime && toDateTime) {
-        const fromISO = fromDateTime.toISOString();
-        const toISO = toDateTime.toISOString();
-        params.append("from_dt", fromISO);
-        params.append("to_dt", toISO);
-      }
+      // Add date range filters based on selected time range
+      const { from_dt, to_dt } = calculateDateRange();
+      if (from_dt) params.append("from_dt", from_dt);
+      if (to_dt) params.append("to_dt", to_dt);
       
       if (cursor) params.append("cursor", cursor);
       params.append("page_size", "20");
@@ -113,7 +166,6 @@ export function Threats() {
       
       setNextCursor(pagedThreats.next_cursor);
       setHasMore(pagedThreats.has_more);
-      
       if (summary) {
         setThreatSummary(summary);
       }
@@ -125,7 +177,7 @@ export function Threats() {
       if (isInitial) setLoading(false);
       else setLoadingMore(false);
     }
-  }, [filterSensorType, filterSensorId, filterSeverity, filterTime, fromDateTime, toDateTime]);
+  }, [filterSensorType, filterSensorId, filterSeverity, filterThreatType, filterTime, fromDateTime, toDateTime]);
 
   // Initial fetch
   useEffect(() => {
@@ -157,26 +209,42 @@ export function Threats() {
     });
   }, [liveThreats]);
 
-  // Infinite scroll handler
-  const handleScroll = useCallback(() => {
-    if (!tableContainerRef.current || loadingMore || !hasMore) return;
-
-    const element = tableContainerRef.current;
-    const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
-
-    if (isAtBottom && nextCursor) {
-      fetchThreats(nextCursor, false);
-    }
-  }, [nextCursor, hasMore, loadingMore, fetchThreats]);
-
   // Setup infinite scroll listener
   useEffect(() => {
     const container = tableContainerRef.current;
-    if (!container) return;
+    if (!container) {
+      console.log('[Scroll] Container ref not found!');
+      return;
+    }
 
-    container.addEventListener('scroll', handleScroll);
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [handleScroll]);
+    console.log('[Scroll] Listener attached. Container scrollHeight:', container.scrollHeight);
+
+    const listener = () => {
+      const scrollDiff = container.scrollHeight - container.scrollTop - container.clientHeight;
+      const isAtBottom = scrollDiff < 100;
+
+      if (scrollDiff < 200) { // Log when getting close to bottom
+        console.log('[Scroll Event]', {
+          scrollHeight: container.scrollHeight,
+          scrollTop: container.scrollTop,
+          clientHeight: container.clientHeight,
+          scrollDiff,
+          isAtBottom,
+          hasMore,
+          loadingMore,
+          nextCursor: nextCursor ? 'YES' : 'NO'
+        });
+      }
+
+      if (isAtBottom && nextCursor && !loadingMore && hasMore) {
+        console.log('[Scroll] FETCHING MORE');
+        fetchThreats(nextCursor, false);
+      }
+    };
+
+    container.addEventListener('scroll', listener);
+    return () => container.removeEventListener('scroll', listener);
+  }, [nextCursor, hasMore, loadingMore, fetchThreats]);
 
   const stats = {
     total: threatSummary?.total_threats ?? threats.length,
@@ -818,7 +886,7 @@ export function Threats() {
         >
           <div 
             ref={tableContainerRef}
-            className="overflow-auto"
+            className="threat-table-container overflow-auto"
             style={{
               maxHeight: "calc(100vh - 420px)",
               overflowY: "auto",
@@ -843,7 +911,7 @@ export function Threats() {
                 }
               `}
             </style>
-            <div className="threat-table-container">
+            <div className="w-full">
               <table className="w-full">
                 <thead>
                   <tr
@@ -985,7 +1053,7 @@ export function Threats() {
                             fontFamily: "var(--font-mono)",
                           }}
                         >
-                          {new Date(threat.timestamp).toLocaleString()}
+                          {formatTimestampInTimezone(threat.timestamp)}
                         </td>
                       </tr>
                     ))
